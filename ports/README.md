@@ -324,7 +324,7 @@ usr/local/...      folders first, then files and links, sorted
 ```
 
 The manifest (`scripts/portstool/manifest.py`, read on the system by
-`userland/pkg/Pkg.Manifests.pas`) is a line each:
+`userland/commands/pkg/Pkg.Manifests.pas`) is a line each:
 
 ```
 format 1

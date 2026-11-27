@@ -1,0 +1,66 @@
+# The fonts in userland/data/fonts (scripts/fonts.list, scripts/update-fonts.py):
+# family	directory	files	licence	version	package
+C059	c059	C059-BdIta.otf C059-Bold.otf C059-Italic.otf C059-Roman.otf	AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817	20200910-6	gsfonts
+Cantarell	cantarell	Cantarell-VF.otf	OFL-1.1	1:0.311-1	cantarell-fonts
+D050000L	d050000l	D050000L.otf	AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817	20200910-6	gsfonts
+DejaVu Sans	dejavu-sans	DejaVuSans-Bold.ttf DejaVuSans-BoldOblique.ttf DejaVuSans-Oblique.ttf DejaVuSans.ttf	Bitstream-Vera	2.37+18+g9b5d1b2f-8	ttf-dejavu
+DejaVu Sans Mono	dejavu-sans-mono	DejaVuSansMono-Bold.ttf DejaVuSansMono-BoldOblique.ttf DejaVuSansMono-Oblique.ttf DejaVuSansMono.ttf	Bitstream-Vera	2.37+18+g9b5d1b2f-8	ttf-dejavu
+DejaVu Serif	dejavu-serif	DejaVuSerif-Bold.ttf DejaVuSerif-BoldItalic.ttf DejaVuSerif-Italic.ttf DejaVuSerif.ttf	Bitstream-Vera	2.37+18+g9b5d1b2f-8	ttf-dejavu
+Droid Sans Fallback	droid-sans-fallback	DroidSansFallback.ttf	Apache-2.0	20121017-11	ttf-droid
+Hack	hack	Hack-Bold.ttf Hack-BoldItalic.ttf Hack-Italic.ttf Hack-Regular.ttf	MIT AND Bitstream-Vera	3.003-7	ttf-hack
+Inconsolata	inconsolata	Inconsolata-Bold.ttf Inconsolata-Regular.ttf	OFL-1.1	1:3.000-5	ttf-inconsolata
+Liberation Mono	liberation-mono	LiberationMono-Bold.ttf LiberationMono-BoldItalic.ttf LiberationMono-Italic.ttf LiberationMono-Regular.ttf	OFL-1.1	2.1.5-2	ttf-liberation
+Liberation Sans	liberation-sans	LiberationSans-Bold.ttf LiberationSans-BoldItalic.ttf LiberationSans-Italic.ttf LiberationSans-Regular.ttf	OFL-1.1	2.1.5-2	ttf-liberation
+Liberation Serif	liberation-serif	LiberationSerif-Bold.ttf LiberationSerif-BoldItalic.ttf LiberationSerif-Italic.ttf LiberationSerif-Regular.ttf	OFL-1.1	2.1.5-2	ttf-liberation
+Nimbus Mono PS	nimbus-mono-ps	NimbusMonoPS-Bold.otf NimbusMonoPS-BoldItalic.otf NimbusMonoPS-Italic.otf NimbusMonoPS-Regular.otf	AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817	20200910-6	gsfonts
+Nimbus Roman	nimbus-roman	NimbusRoman-Bold.otf NimbusRoman-BoldItalic.otf NimbusRoman-Italic.otf NimbusRoman-Regular.otf	AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817	20200910-6	gsfonts
+Nimbus Sans	nimbus-sans	NimbusSans-Bold.otf NimbusSans-BoldItalic.otf NimbusSans-Italic.otf NimbusSans-Regular.otf	AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817	20200910-6	gsfonts
+Nimbus Sans Narrow	nimbus-sans-narrow	NimbusSansNarrow-Bold.otf NimbusSansNarrow-BoldOblique.otf NimbusSansNarrow-Oblique.otf NimbusSansNarrow-Regular.otf	AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817	20200910-6	gsfonts
+Noto Color Emoji	noto-color-emoji	NotoColorEmoji.ttf	OFL-1.1	1:2.051-1	noto-fonts-emoji
+Noto Sans	noto-sans	NotoSans-Bold.ttf NotoSans-BoldItalic.ttf NotoSans-Italic.ttf NotoSans-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Adlam	noto-sans-adlam	NotoSansAdlam-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Arabic	noto-sans-arabic	NotoSansArabic-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Armenian	noto-sans-armenian	NotoSansArmenian-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Balinese	noto-sans-balinese	NotoSansBalinese-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Bengali	noto-sans-bengali	NotoSansBengali-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Canadian Aboriginal	noto-sans-canadian-aboriginal	NotoSansCanadianAboriginal-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Cherokee	noto-sans-cherokee	NotoSansCherokee-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans CJK	noto-sans-cjk	NotoSansCJK-Bold.ttc NotoSansCJK-Regular.ttc	OFL-1.1	20240730-1	noto-fonts-cjk
+Noto Sans Devanagari	noto-sans-devanagari	NotoSansDevanagari-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Ethiopic	noto-sans-ethiopic	NotoSansEthiopic-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Georgian	noto-sans-georgian	NotoSansGeorgian-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Gujarati	noto-sans-gujarati	NotoSansGujarati-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Gurmukhi	noto-sans-gurmukhi	NotoSansGurmukhi-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Hebrew	noto-sans-hebrew	NotoSansHebrew-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Javanese	noto-sans-javanese	NotoSansJavanese-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Kannada	noto-sans-kannada	NotoSansKannada-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Khmer	noto-sans-khmer	NotoSansKhmer-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Lao	noto-sans-lao	NotoSansLao-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Malayalam	noto-sans-malayalam	NotoSansMalayalam-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Math	noto-sans-math	NotoSansMath-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Mongolian	noto-sans-mongolian	NotoSansMongolian-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Mono	noto-sans-mono	NotoSansMono-Bold.ttf NotoSansMono-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Myanmar	noto-sans-myanmar	NotoSansMyanmar-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans NKo	noto-sans-nko	NotoSansNKo-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Oriya	noto-sans-oriya	NotoSansOriya-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Sinhala	noto-sans-sinhala	NotoSansSinhala-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Symbols	noto-sans-symbols	NotoSansSymbols-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Symbols 2	noto-sans-symbols-2	NotoSansSymbols2-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Syriac	noto-sans-syriac	NotoSansSyriac-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Tamil	noto-sans-tamil	NotoSansTamil-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Telugu	noto-sans-telugu	NotoSansTelugu-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Thaana	noto-sans-thaana	NotoSansThaana-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Thai	noto-sans-thai	NotoSansThai-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Tifinagh	noto-sans-tifinagh	NotoSansTifinagh-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Vai	noto-sans-vai	NotoSansVai-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Sans Yi	noto-sans-yi	NotoSansYi-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Serif	noto-serif	NotoSerif-Bold.ttf NotoSerif-BoldItalic.ttf NotoSerif-Italic.ttf NotoSerif-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Noto Serif Tibetan	noto-serif-tibetan	NotoSerifTibetan-Regular.ttf	OFL-1.1	1:2026.10.01-1	noto-fonts
+Open Sans	open-sans	OpenSans-Bold.ttf OpenSans-BoldItalic.ttf OpenSans-Italic.ttf OpenSans-Regular.ttf	OFL-1.1	3.003-1	ttf-opensans
+P052	p052	P052-Bold.otf P052-BoldItalic.otf P052-Italic.otf P052-Roman.otf	AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817	20200910-6	gsfonts
+Roboto	roboto	Roboto-Bold.ttf Roboto-BoldItalic.ttf Roboto-Italic.ttf Roboto-Regular.ttf	OFL-1.1	3.016-1	ttf-roboto
+Source Sans 3	source-sans-3	SourceSans3-Bold.otf SourceSans3-BoldIt.otf SourceSans3-It.otf SourceSans3-Regular.otf	OFL-1.1	3.052-2	adobe-source-sans-fonts
+Standard Symbols PS	standard-symbols-ps	StandardSymbolsPS.otf	AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817	20200910-6	gsfonts
+URW Bookman	urw-bookman	URWBookman-Demi.otf URWBookman-DemiItalic.otf URWBookman-Light.otf URWBookman-LightItalic.otf	AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817	20200910-6	gsfonts
+URW Gothic	urw-gothic	URWGothic-Book.otf URWGothic-BookOblique.otf URWGothic-Demi.otf URWGothic-DemiOblique.otf	AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817	20200910-6	gsfonts
+Z003	z003	Z003-MediumItalic.otf	AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817	20200910-6	gsfonts

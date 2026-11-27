@@ -24,8 +24,8 @@
   with why, hidden ones kept from the menu, programs found by executable
   and folder, a folder's own icon before the theme's
   (Configuration.ProgramFolders); and every program.info of the source
-  tree (userland/NAME/program.info) valid, naming NAME as its
-  executable.
+  tree (userland/apps/NAME/program.info, userland/apps/demos/NAME/
+  program.info) valid, naming NAME as its executable.
 }
 unit SettingsTest.Programs;
 
@@ -240,6 +240,8 @@ begin
 end;
 
 procedure TestSourceProgramInfo(Check: TProgramCheckProcedure);
+const
+  ProgramFolderRoots: array[0..1] of string = ('userland/apps', 'userland/apps/demos');
 var
   Search: TSearchRec;
   Text: string;
@@ -248,34 +250,36 @@ var
   Count: Integer;
   AllValid: Boolean;
   Input: TextFile;
-  Line: string;
+  Line, FolderRoot, FileName: string;
 begin
   Count := 0;
   AllValid := True;
-  if FindFirst('userland/*', faDirectory, Search) = 0 then
-  begin
-    repeat
-      if not FileExists('userland/' + Search.Name + '/' + ProgramInfoFileName) then
-        Continue;
-      AssignFile(Input, 'userland/' + Search.Name + '/' + ProgramInfoFileName);
-      Reset(Input);
-      Text := '';
-      while not Eof(Input) do
-      begin
-        ReadLn(Input, Line);
-        Text := Text + Line + #10;
-      end;
-      CloseFile(Input);
-      Inc(Count);
-      if not ParseProgramInfo(Text, Search.Name, Info, Problems) or (Length(Problems) > 0) or
-         (Info.Executable <> Search.Name) or (Info.Description = '') then
-      begin
-        AllValid := False;
-        WriteLn('[settings] ', Search.Name, '/program.info: ', string.Join('; ', Problems));
-      end;
-    until FindNext(Search) <> 0;
-    FindClose(Search);
-  end;
+  for FolderRoot in ProgramFolderRoots do
+    if FindFirst(FolderRoot + '/*', faDirectory, Search) = 0 then
+    begin
+      repeat
+        FileName := FolderRoot + '/' + Search.Name + '/' + ProgramInfoFileName;
+        if not FileExists(FileName) then
+          Continue;
+        AssignFile(Input, FileName);
+        Reset(Input);
+        Text := '';
+        while not Eof(Input) do
+        begin
+          ReadLn(Input, Line);
+          Text := Text + Line + #10;
+        end;
+        CloseFile(Input);
+        Inc(Count);
+        if not ParseProgramInfo(Text, Search.Name, Info, Problems) or (Length(Problems) > 0) or
+           (Info.Executable <> Search.Name) or (Info.Description = '') then
+        begin
+          AllValid := False;
+          WriteLn('[settings] ', Search.Name, '/program.info: ', string.Join('; ', Problems));
+        end;
+      until FindNext(Search) <> 0;
+      FindClose(Search);
+    end;
   Check('source tree: program.info files found', Count > 0);
   Check('source tree: every program.info valid, described, naming its folder''s program', AllValid);
 end;

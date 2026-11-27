@@ -166,20 +166,43 @@ DYNTLS_LIBRARY := $(USER_LIBRARY_OUTPUT)/libdyntls.so
 STATICTLS_LIBRARY := $(USER_LIBRARY_OUTPUT)/libstatictls.so
 DYNPASCAL_LIBRARY := $(USER_LIBRARY_OUTPUT)/libdynpascal.so
 
-# Every userland/bin/<name>.pas becomes /bin/<name>. A program made of
-# several units keeps the others in userland/<name>/.
-USER_PROGRAM_SOURCES := $(wildcard userland/bin/*.pas)
-USER_PROGRAMS := $(patsubst userland/bin/%.pas,$(USER_PROGRAM_OUTPUT)/%,$(USER_PROGRAM_SOURCES))
+# Where the programs' sources are (docs/Architecture.md, "Source layout"):
+# the command line tools in userland/commands, the services and session
+# programs in userland/system, the tests in userland/tests. Each becomes
+# /bin/<name>:
+#   - every <name>.pas in a folder of single-file programs (the areas
+#     themselves and the groups of userland/commands below), and
+#   - every other folder of an area, userland/<area>/<name>/, a program
+#     with units of its own: <name>.pas and its units beside it.
+USER_PROGRAM_AREAS := userland/commands userland/system userland/tests
+SINGLE_FILE_PROGRAM_FOLDERS := userland/system userland/tests \
+	$(addprefix userland/commands/,coreutils files networking administration display media web)
+USER_PROGRAM_FOLDERS := $(filter-out $(SINGLE_FILE_PROGRAM_FOLDERS), \
+	$(patsubst %/,%,$(wildcard $(addsuffix /*/,$(USER_PROGRAM_AREAS)))))
+USER_PROGRAM_SOURCES := $(wildcard $(addsuffix /*.pas,$(SINGLE_FILE_PROGRAM_FOLDERS))) \
+	$(foreach folder,$(USER_PROGRAM_FOLDERS),$(folder)/$(notdir $(folder)).pas)
+USER_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,$(basename $(notdir $(USER_PROGRAM_SOURCES))))
+ifneq ($(words $(USER_PROGRAMS)),$(words $(sort $(USER_PROGRAMS))))
+  $(error Two programs in userland have the same name: $(sort $(USER_PROGRAMS)))
+endif
 
-# Graphical programs live in folders of their own: every userland/<name>/
-# with a program.info (its description: Configuration.ProgramInfo) is
-# built from userland/<name>/<name>.pas and installed as /app/<name>/,
-# the executable, program.info and the folder's own icons (icons/*.ico).
+# Desktop programs live in folders of their own: every userland/apps/<name>/
+# (and userland/apps/demos/<name>/) with a program.info (its description:
+# Configuration.ProgramInfo) is built from <name>.pas there and installed
+# as /app/<name>/, the executable, program.info and the folder's own icons
+# (icons/*.ico).
 APP_PROGRAM_OUTPUT := $(USER_BUILD_DIRECTORY)/app-programs
 APP_OUTPUT := $(USER_BUILD_DIRECTORY)/app
-APP_NAMES := $(patsubst userland/%/program.info,%,$(wildcard userland/*/program.info))
+APP_PROGRAM_FOLDERS := $(patsubst %/program.info,%,$(wildcard userland/apps/*/program.info userland/apps/demos/*/program.info))
+APP_NAMES := $(notdir $(APP_PROGRAM_FOLDERS))
 APP_PROGRAMS := $(addprefix $(APP_PROGRAM_OUTPUT)/,$(APP_NAMES))
 APP_FOLDERS := $(addsuffix /.installed,$(addprefix $(APP_OUTPUT)/,$(APP_NAMES)))
+
+# For each program <name>: PROGRAM_SOURCE_<name>, its program file, and
+# for one with units of its own PROGRAM_FOLDER_<name>, where they are.
+$(foreach source,$(USER_PROGRAM_SOURCES),$(eval PROGRAM_SOURCE_$(basename $(notdir $(source))) := $(source)))
+$(foreach folder,$(USER_PROGRAM_FOLDERS) $(APP_PROGRAM_FOLDERS),$(eval PROGRAM_FOLDER_$(notdir $(folder)) := $(folder)))
+$(foreach folder,$(APP_PROGRAM_FOLDERS),$(eval PROGRAM_SOURCE_$(notdir $(folder)) := $(folder)/$(notdir $(folder)).pas))
 
 # The system's fonts (/lib/fonts/terminus): Terminus in the sizes it comes
 # in, regular and bold, unpacked; with its licence (SIL Open Font
@@ -194,15 +217,15 @@ SYSTEM_FONTS_STAMP := $(SYSTEM_FONT_DIRECTORY)/.unpacked
 # interface's) and DejaVu Sans Mono, Liberation, Noto with CJK and colour
 # emoji, Source Sans, Cantarell, Roboto, Open Sans, Hack, Inconsolata,
 # the URW base 35 and Droid Sans Fallback, all freely licensed and kept
-# in userland/fonts with their licences (which have to go with them).
+# in userland/data/fonts with their licences (which have to go with them).
 # scripts/install-fonts.py puts in the set FONT_SET names, as
 # scripts/fonts.list says: full (the system disk, about 80 MB), core
 # (DejaVu Sans and Sans Mono, Liberation, Droid Sans Fallback for CJK
 # and Noto Sans Symbols 2: the default for arm64, whose system image is
 # the Raspberry Pi's RAM disk, served over TFTP) or base (DejaVu Sans
 # and Sans Mono regular and bold only). make update-fonts refreshes
-# userland/fonts from the build machine's font packages.
-OUTLINE_FONT_SOURCE := userland/fonts
+# userland/data/fonts from the build machine's font packages.
+OUTLINE_FONT_SOURCE := userland/data/fonts
 OUTLINE_FONT_FILES := $(wildcard $(OUTLINE_FONT_SOURCE)/*/*) $(OUTLINE_FONT_SOURCE)/MANIFEST
 FONT_SCRIPTS := scripts/install-fonts.py scripts/fontlist.py scripts/fonts.list
 DEJAVU_SANS_DIRECTORY := $(OUTLINE_FONT_SOURCE)/dejavu-sans
@@ -215,9 +238,9 @@ OUTLINE_FONTS_STAMP := $(USER_BUILD_DIRECTORY)/fonts/.outline-fonts-$(FONT_SET)
 
 # The icon theme (/usr/share/icons/NAME.ico, 16 to 96 pixels) and the
 # pointer's pictures (/lib/pointers/NAME.cur, several sizes): drawn
-# with vector shapes by userland/icons/make-icons.py (pycairo) when
+# with vector shapes by userland/data/icons/make-icons.py (pycairo) when
 # the system is built; the drawings are the project's own.
-ICON_SOURCES := userland/icons/make-icons.py $(wildcard userland/icons/iconkit/*.py)
+ICON_SOURCES := userland/data/icons/make-icons.py $(wildcard userland/data/icons/iconkit/*.py)
 ICON_OUTPUT := $(USER_BUILD_DIRECTORY)/icons
 POINTER_PICTURE_OUTPUT := $(USER_BUILD_DIRECTORY)/pointers
 ICONS_STAMP := $(ICON_OUTPUT)/.drawn
@@ -583,7 +606,7 @@ $(OUTLINE_FONTS_STAMP): $(OUTLINE_FONT_FILES) $(FONT_SCRIPTS)
 $(ICONS_STAMP): $(ICON_SOURCES)
 	@python3 -c 'import cairo' 2>/dev/null || { echo "Python 3 with pycairo is needed to draw the icons (python-cairo)"; exit 1; }
 	@rm -rf $(ICON_OUTPUT) $(POINTER_PICTURE_OUTPUT)
-	python3 -B userland/icons/make-icons.py $(ICON_OUTPUT) $(POINTER_PICTURE_OUTPUT)
+	python3 -B userland/data/icons/make-icons.py $(ICON_OUTPUT) $(POINTER_PICTURE_OUTPUT)
 	@touch $@
 
 # A library loaded at run time by the tests.
@@ -671,16 +694,16 @@ $(QUIC_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(QUIC_LIBRARY_OBJECTS) -Fu$(HTTP_LI
 	-Fu$(COMPRESSION_LIBRARY_OBJECTS)
 $(QUIC_PROGRAMS): $(QUIC_LIBRARY)
 # pkg installs packages (tar.zst, read by libarchive) and fetches
-# repositories through libhttp; its units are in userland/pkg.
+# repositories through libhttp; its units are in userland/commands/pkg.
 PKG_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,pkg)
 $(PKG_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -larchive -lhttp -ltls -lcompression
 $(PKG_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(ARCHIVE_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS) -Fu$(TLS_LIBRARY_OBJECTS) \
 	-Fu$(COMPRESSION_LIBRARY_OBJECTS)
 $(PKG_PROGRAMS): $(ARCHIVE_LIBRARY) $(HTTP_LIBRARY)
-# ss is built on netstat's units (userland/netstat).
+# ss is built on netstat's units (userland/commands/netstat).
 NETSTAT_UNIT_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,ss)
-$(NETSTAT_UNIT_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fuuserland/netstat
-$(NETSTAT_UNIT_PROGRAMS): $(wildcard userland/netstat/*.pas)
+$(NETSTAT_UNIT_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fuuserland/commands/netstat
+$(NETSTAT_UNIT_PROGRAMS): $(wildcard userland/commands/netstat/*.pas)
 # The SSH server, its SFTP subsystem and the client programs speak SSH
 # through libssh.
 # htmldump parses HTML through libweb.
@@ -688,8 +711,8 @@ $(NETSTAT_UNIT_PROGRAMS): $(wildcard userland/netstat/*.pas)
 WEB_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,htmldump webrender)
 $(WEB_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -lweb -lsvg -ljavascript -lwasm -lhttp -lcss -limage -lfont -ldrawing -ltls -lcompression -lcryptography
 $(WEB_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(WEB_LIBRARY_OBJECTS) -Fu$(SVG_LIBRARY_OBJECTS) -Fu$(WASM_LIBRARY_OBJECTS) -Fu$(JAVASCRIPT_LIBRARY_OBJECTS) -Fu$(HTTP_LIBRARY_OBJECTS) -Fu$(CSS_LIBRARY_OBJECTS) -Fu$(IMAGE_LIBRARY_OBJECTS) \
-	-Fu$(COMPRESSION_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) -Fuuserland/webrender
-$(WEB_PROGRAMS): $(WEB_LIBRARY) $(wildcard userland/webrender/*.pas)
+	-Fu$(COMPRESSION_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS)
+$(WEB_PROGRAMS): $(WEB_LIBRARY)
 # The browser: web views (libwebview over libweb and libjavascript), with
 # HTTP/3 from libquic.
 BROWSER_PROGRAMS := $(addprefix $(APP_PROGRAM_OUTPUT)/,browser)
@@ -700,7 +723,7 @@ $(BROWSER_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(WEBVIEW_LIBRARY_OBJECTS) -Fu$(W
 	-Fu$(CSS_LIBRARY_OBJECTS) -Fu$(DRAWING_LIBRARY_OBJECTS) -Fu$(FONT_LIBRARY_OBJECTS) -Fu$(CONFIGURATION_LIBRARY_OBJECTS) \
 	-Fu$(WINDOWING_LIBRARY_OBJECTS) -Fu$(CONTROLS_LIBRARY_OBJECTS) -Fu$(COMPRESSION_LIBRARY_OBJECTS) \
 	-Fu$(IMAGE_LIBRARY_OBJECTS) -Fi$(WEB_GENERATED)
-$(BROWSER_PROGRAMS): $(WEBVIEW_LIBRARY) $(QUIC_LIBRARY) $(wildcard userland/browser/*.inc)
+$(BROWSER_PROGRAMS): $(WEBVIEW_LIBRARY) $(QUIC_LIBRARY)
 # The browser's content process: the page engine (libwebview) in a
 # sandboxed process of its own, talking to the browser over libwebipc.
 WEBCONTENT_PROGRAMS := $(addprefix $(USER_PROGRAM_OUTPUT)/,webcontent)
@@ -782,33 +805,41 @@ $(SOUND_PROGRAMS): EXTRA_PROGRAM_LIBRARIES := -laudio
 $(SOUND_PROGRAMS): EXTRA_PROGRAM_UNITS := -Fu$(AUDIO_LIBRARY_OBJECTS)
 $(SOUND_PROGRAMS): $(AUDIO_LIBRARY)
 
-# Compiles program $* from $< (its other units in userland/$*) and links
-# it as $@: a /bin program or a program folder's executable.
+# Compiles program $* from $< (its other units in PROGRAM_FOLDER_$*) and
+# links it as $@: a /bin program or a program folder's executable.
 define BUILD_USER_PROGRAM
 	@rm -rf $(USER_BUILD_DIRECTORY)/programs/$*
 	@mkdir -p $(USER_BUILD_DIRECTORY)/programs/$* $(dir $@)
 	$(TARGET_FPC) $(USER_FLAGS) -Fu$(RTL_USER_DIRECTORY) -Fu$(SYSTEM_LIBRARY_OBJECTS) -Fu$(CRYPTO_LIBRARY_OBJECTS) \
-		-Fu$(CORE_LIBRARY_OBJECTS) $(EXTRA_PROGRAM_UNITS) -Fuuserland/$* \
+		-Fu$(CORE_LIBRARY_OBJECTS) $(EXTRA_PROGRAM_UNITS) $(addprefix -Fu,$(PROGRAM_FOLDER_$*)) \
 		-FU$(USER_BUILD_DIRECTORY)/programs/$* -FE$(USER_BUILD_DIRECTORY)/programs/$* $<
 	$(LD) -pie --no-dynamic-linker $(USER_LINK_FLAGS) -e _start -o $@ \
 		$(USER_BUILD_DIRECTORY)/programs/$*/*.o $(RTL_USER_DIRECTORY)/si_prc.o \
 		-L$(USER_LIBRARY_OUTPUT) $(EXTRA_PROGRAM_LIBRARIES) -lcoreutils -lcryptography -lsystem
 endef
 
-$(USER_PROGRAM_OUTPUT)/%: userland/bin/%.pas $(CORE_LIBRARY) $$(wildcard userland/$$*/*.pas)
+# A program's sources: its program file and, for a program folder, the
+# units and include files beside it. A name that is no program's gets a
+# source that does not exist, so that make says there is no rule for it.
+PROGRAM_SOURCES_OF = $(or $(PROGRAM_SOURCE_$(1)),userland/no-program-named/$(1).pas) \
+	$(if $(PROGRAM_FOLDER_$(1)),$(wildcard $(PROGRAM_FOLDER_$(1))/*.pas $(PROGRAM_FOLDER_$(1))/*.inc))
+
+$(USER_PROGRAM_OUTPUT)/%: $$(call PROGRAM_SOURCES_OF,$$*) $(CORE_LIBRARY)
 	$(BUILD_USER_PROGRAM)
 
-$(APP_PROGRAM_OUTPUT)/%: userland/$$*/$$*.pas $(CORE_LIBRARY) $$(wildcard userland/$$*/*.pas)
+$(APP_PROGRAM_OUTPUT)/%: $$(call PROGRAM_SOURCES_OF,$$*) $(CORE_LIBRARY)
 	$(BUILD_USER_PROGRAM)
 
 # A program's folder as installed (/app/<name>). A copy of the program
 # an older build left in /bin, before it had a folder, goes.
-$(APP_OUTPUT)/%/.installed: $(APP_PROGRAM_OUTPUT)/% userland/%/program.info $$(wildcard userland/$$*/icons/*.ico)
+$(APP_OUTPUT)/%/.installed: $(APP_PROGRAM_OUTPUT)/% $$(PROGRAM_FOLDER_$$*)/program.info \
+		$$(wildcard $$(PROGRAM_FOLDER_$$*)/icons/*.ico)
 	@rm -rf $(APP_OUTPUT)/$*
 	@rm -f $(USER_PROGRAM_OUTPUT)/$*
 	@mkdir -p $(APP_OUTPUT)/$*
-	cp $(APP_PROGRAM_OUTPUT)/$* userland/$*/program.info $(APP_OUTPUT)/$*/
-	@if [ -d userland/$*/icons ]; then mkdir -p $(APP_OUTPUT)/$*/icons; cp userland/$*/icons/*.ico $(APP_OUTPUT)/$*/icons/; fi
+	cp $(APP_PROGRAM_OUTPUT)/$* $(PROGRAM_FOLDER_$*)/program.info $(APP_OUTPUT)/$*/
+	@if [ -d $(PROGRAM_FOLDER_$*)/icons ]; then mkdir -p $(APP_OUTPUT)/$*/icons; \
+		cp $(PROGRAM_FOLDER_$*)/icons/*.ico $(APP_OUTPUT)/$*/icons/; fi
 	@touch $@
 
 # The native Free Pascal compiler, its units and configuration.
@@ -829,7 +860,7 @@ $(SYSTEM_DISK): $(CRAFTED_ELF_STAMP)
 # The system volume: an ext4 image labelled FPOSROOT.
 system-disk: $(SYSTEM_DISK)
 
-$(SYSTEM_DISK): userland $(NATIVE_FPC_SYSTEM_DISK_FILES) scripts/make-system-disk.sh $(wildcard userland/etc/*) $(wildcard userland/etc/*/*) \
-		$(wildcard userland/etc/*/*/*) \
-		$(wildcard userland/pointers/*) $(AUTHORIZED_KEYS)
+$(SYSTEM_DISK): userland $(NATIVE_FPC_SYSTEM_DISK_FILES) scripts/make-system-disk.sh $(wildcard userland/data/etc/*) $(wildcard userland/data/etc/*/*) \
+		$(wildcard userland/data/etc/*/*/*) \
+		$(wildcard userland/data/pointers/*) $(AUTHORIZED_KEYS)
 	AUTHORIZED_KEYS="$(AUTHORIZED_KEYS)" NATIVE_FPC=$(NATIVE_FPC) scripts/make-system-disk.sh $(USER_BUILD_DIRECTORY) $@

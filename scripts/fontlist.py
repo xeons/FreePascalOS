@@ -24,7 +24,7 @@ import struct
 
 FONT_EXTENSIONS = ('.ttf', '.otf', '.ttc')
 MANIFEST_NAME = 'MANIFEST'
-MANIFEST_HEADER = ('# The fonts in userland/fonts (scripts/fonts.list, scripts/update-fonts.py):\n'
+MANIFEST_HEADER = ('# The fonts in userland/data/fonts (scripts/fonts.list, scripts/update-fonts.py):\n'
                    '# family\tdirectory\tfiles\tlicence\tversion\tpackage\n')
 
 

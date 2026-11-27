@@ -197,7 +197,7 @@ var
   Pixel: LongWord;
   FontBytes: TBytes;
 begin
-  FontBytes := ReadFileBytes('userland/fonts/dejavu-sans-mono/DejaVuSansMono.ttf');
+  FontBytes := ReadFileBytes('userland/data/fonts/dejavu-sans-mono/DejaVuSansMono.ttf');
   CheckWoff(FontBytes);
   Environment.Site.AddRoute('r.test/page.html', 200, 'Content-Type: text/html; charset=utf-8',
     '<!DOCTYPE html><html><head><link rel=stylesheet href=r.css>' +

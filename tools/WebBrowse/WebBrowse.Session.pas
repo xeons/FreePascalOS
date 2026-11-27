@@ -257,7 +257,7 @@ begin
   Result.QuietMilliseconds := 500;
   Result.StallSeconds := 5;
   Result.StepPatienceMilliseconds := 10000;
-  Result.FontDirectory := 'userland/fonts';
+  Result.FontDirectory := 'userland/data/fonts';
 end;
 
 { Before the old document goes (as the web view does). }
@@ -1086,7 +1086,7 @@ begin
 end;
 
 { The system's font configuration beside the font directory
-  (userland/etc/fonts.conf for userland/fonts), so Arial and Helvetica
+  (userland/data/etc/fonts.conf for userland/data/fonts), so Arial and Helvetica
   are Liberation Sans as in the system, not the built-in DejaVu Sans. }
 procedure UseSystemFontConfiguration(const FontDirectory: string);
 var

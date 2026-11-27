@@ -44,7 +44,7 @@
     --multiplier X scale the time limits (1)
     -v             each test as it finishes
     --dry-run      print the tests the paths hold; run none
-    -f FONTDIR     font directory (userland/fonts)
+    -f FONTDIR     font directory (userland/data/fonts)
     --shots DIR    where failing reftests leave their screenshots
                    (build/wpt/reftest-shots; another for a second run
                    at the same time)
@@ -170,7 +170,7 @@ begin
   if Jobs < 1 then
     Jobs := 1;
   Multiplier := 1;
-  FontDirectory := 'userland/fonts';
+  FontDirectory := 'userland/data/fonts';
   ShotDirectory := 'build/wpt/reftest-shots';
 end;
 

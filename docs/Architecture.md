@@ -123,7 +123,7 @@ and `/bin/ppcx64` (`/bin/ppca64` on AArch64) are Free Pascal 3.2.2 built
 as FreePascalOS programs, with the runtime library and the system's own
 libraries as their units. `fpc hello.pas` in a shell makes a program that
 runs; a program of several units, a `library`, and the system's own tools
-(`userland/bin/wc.pas`, `sha256sum.pas` against libcoreutils and
+(`userland/commands/coreutils/wc.pas`, `sha256sum.pas` against libcoreutils and
 libcryptography) build the same way, and the compiler compiles itself
 (about 5.5 s under KVM; the result compiles itself again to the same
 size).
@@ -2950,7 +2950,7 @@ waking). Under KVM `displaybench -d 1` gives about 1400 full frames, 15000
 `displayserver` is an ordinary program that owns the display and the
 input devices (the text console gives them up while it runs) and draws
 the windows of the programs that connect to it. Its units are in
-`userland/displayserver`; the protocol is `Windowing.Protocol` in
+`userland/system/displayserver`; the protocol is `Windowing.Protocol` in
 libwindowing.
 
 A program connects to the port `display` and says hello; the server
@@ -3078,7 +3078,7 @@ and the two diagonals), a text beam, a busy hourglass, a hand, move,
 not allowed and a crosshair (`Pointer*` in the protocol, 0 to 10;
 `PointerShapeCount` 11). Each is drawn from its pictures when it has
 them (`Server.PointerPictures`): `/lib/pointers/NAME.cur`, cursor files
-the build draws with the icons (`userland/icons`, white shapes with a
+the build draws with the icons (`userland/data/icons`, white shapes with a
 black outline and a soft shadow) in 24, 32, 40, 48, 64 and 96 pixels,
 each entry with its hotspot. The picture for the display the pointer is
 on is 32 pixels at 100 % (40 at 125 %, 48 at 150 %, 64 at 200 %): that
@@ -3103,7 +3103,7 @@ shape can be changed without building anything:
 Every line after the hotspot is a row: `#` black, `.` white, a space or
 `-` clear. A missing or malformed file leaves that shape built in (the
 built-in patterns are the same as the files `make-system-disk.sh`
-installs from `userland/pointers`); the server says how many it read
+installs from `userland/data/pointers`); the server says how many it read
 ("11 of 11 pointer shapes from /lib/pointers, 11 with pictures").
 Which shape shows (`Server.PointerAreas`): over a frame the server's
 choice, a resize arrow on the borders and corners of a resizable window
@@ -3918,8 +3918,8 @@ The icon theme: every icon is `/usr/share/icons/NAME.ico` (an index of
 them in `index.txt`), holding the same picture at 16, 20, 24, 32, 40,
 48, 64 and 96 pixels with alpha (32-bit DIB entries up to 48, PNG above).
 The set is the project's own, drawn with vector shapes when the system
-is built (`userland/icons/make-icons.py` with pycairo; the definitions
-in `userland/icons/iconkit`, one module a group: places, folders, file
+is built (`userland/data/icons/make-icons.py` with pycairo; the definitions
+in `userland/data/icons/iconkit`, one module a group: places, folders, file
 types, programs, actions, status, devices, overlays, and the pointers),
 in one three-quarter view (fronts rising a little to the right, depth
 going back up and right), lit from the top left, dark outlines and a
@@ -4282,7 +4282,7 @@ title bar while one is open and checks that nothing in the window's
 client area changed (the box is still above it), that its title bar
 stayed inactive, and that Enter still went to the box.
 
-`notepad` is the plain text editor (its units in `userland/notepad`): a
+`notepad` is the plain text editor (its units in `userland/apps/notepad`): a
 `TTextEdit` filling the window, titled with the file's name
 ("Untitled" for a new one), a menu bar (File: New, Open, Save, Save As,
 Exit; Edit: Undo, Redo, Cut, Copy, Paste, Delete, Find, Find Next,
@@ -4312,7 +4312,7 @@ ends Notepad and checks that the next one starts with it on.
 
 ### Paint
 
-`paint` (userland/paint, `userland/paint/paint.pas`, installed as `/app/paint`) draws and edits
+`paint` (userland/apps/paint, `userland/apps/paint/paint.pas`, installed as `/app/paint`) draws and edits
 pictures: a TImage (libimage) in a view that zooms from 12.5% to 800%
 (one image pixel to one pixel of the display at 100%, whatever its
 scale) and scrolls, transparency over a checkerboard and a grid between
@@ -4378,7 +4378,7 @@ a PNG through the save dialog and reads its pixels back with
 
 ### The file manager
 
-`files [PLACE]` (`userland/files/files.pas` with its `FileManager.*`
+`files [PLACE]` (`userland/apps/files/files.pas` with its `FileManager.*`
 units, installed as `/app/files`) is a tabbed browser laid out like the
 file managers people know from other systems, drawn with this system's
 own controls, icons and themes (Sunrise and Classic). PLACE is a folder
@@ -4588,7 +4588,7 @@ zipfile and tarfile.
 
 ### The terminal window
 
-`terminal` (`userland/terminal/terminal.pas` with its units, installed as `/app/terminal`)
+`terminal` (`userland/apps/terminal/terminal.pas` with its units, installed as `/app/terminal`)
 is a window running the shell on a pseudo-terminal of its own;
 `terminal` with no arguments opens one (`-x`, `-y` place it, `-e` runs
 another program). Its parts:
@@ -4658,7 +4658,7 @@ runs (see "Settings").
 
 ### The desktop shell
 
-`desktop` (units in `userland/desktop`) is the display server's shell:
+`desktop` (units in `userland/system/desktop`) is the display server's shell:
 it registers for the role through `Windowing.Shell` (`RegisterAsShell`;
 the server's events about other programs' windows, the displays and the
 notification icons reach `OnShellEvent` from the message loop, since
@@ -4777,7 +4777,7 @@ wintest ends.
 
 ### The task manager
 
-`taskmanager` (units in `userland/taskmanager`) shows the programs, the
+`taskmanager` (units in `userland/apps/taskmanager`) shows the programs, the
 processes and how busy the system is, from the kernel's accounting
 (see "Processor time and memory"). Each look (`TaskManager.Sampler`)
 takes a snapshot of the processes and the system's usage and keeps the
@@ -4880,7 +4880,7 @@ tests. Their plain logic builds on the host too (`make apps-test`,
 tools/AppsTest, part of `make test`: "APPS TEST PASSED: N passed, 0
 failed").
 
-`imageviewer [FILE]` (`userland/imageviewer`) shows any picture libimage
+`imageviewer [FILE]` (`userland/apps/imageviewer`) shows any picture libimage
 reads, from the command line, the open dialog or files dropped on the
 window; Files opens pictures with it and its desktop icon takes dropped
 files. The view (`ImageViewer.ImageView`) is a scrolling panel holding a
@@ -4905,7 +4905,7 @@ dialog laid out by a table), BMP, WebP, TIFF or GIF by the name's
 extension: the whole animation for PNG and WebP when it is not turned,
 else the picture as shown.
 
-`calculator [-k KEYS]` (`userland/calculator`) has three modes: standard
+`calculator [-k KEYS]` (`userland/apps/calculator`) has three modes: standard
 (left to right, as a pocket calculator: 2 + 3 x 4 is 20), scientific
 (precedence, parentheses, trigonometry in degrees, radians or gradians,
 powers, roots, logarithms, factorials, pi and e) and programmer
@@ -4928,7 +4928,7 @@ entry, F9 negates); the keypad is a table of equal cells per mode
 split container; Ctrl+C and Ctrl+V copy the number and paste a number
 or an expression.
 
-`volumecontrol [-c]` (`userland/volumecontrol`) is a mixer: a table row
+`volumecontrol [-c]` (`userland/apps/volumecontrol`) is a mixer: a table row
 per sound output (`VolumeControl.OutputRow`: name, slider, percent,
 Mute, a peak meter per side), the default output chosen in a list,
 Sound Settings opening the Control Panel's page. Changes apply at once
@@ -4951,7 +4951,7 @@ made through the clipboard, the calculator evaluating keys given with
 
 ### The Control Panel
 
-`controlpanel [PAGE]` (units in `userland/controlpanel`) is the
+`controlpanel [PAGE]` (units in `userland/apps/controlpanel`) is the
 system's settings in one window: a list of pages on the left, the page
 chosen on the right (`ControlPanel.Pages`: a group box that shows the
 settings as they are, `Load`, and makes the changes chosen on it,
@@ -6453,7 +6453,7 @@ layer); waking resets it, gives it its queues and receive buffers again
 
 ### The network service
 
-`/bin/network` (units `NetworkService.*` in `userland/network`), run by
+`/bin/network` (units `NetworkService.*` in `userland/system/network`), run by
 `/etc/services/network.service` in both boot modes (root, `ready =
 notify`, restarted on failure up to three times), runs as long as the
 system does. Its main loop (`NetworkService.Supervisor`) waits at once
@@ -6732,7 +6732,7 @@ its extended response code goes into `ResponseCode` (BADVERS); `host -v`
 shows it as dig's OPT pseudosection. `Sys.InternetAddresses` reads and
 writes IPv6 addresses too (RFC 5952 form).
 
-**netstat** (`userland/netstat`, `Netstat.*`) in the manner of
+**netstat** (`userland/commands/netstat`, `Netstat.*`) in the manner of
 net-tools: the sockets (`Netstat.Connections`: TCP, then UDP, then ICMP
 with `-w`; `-l` servers, `-a` all, otherwise connected ones; `-p` the
 owner as "pid/name" from a process snapshot), `-r` the routes with
@@ -6749,7 +6749,7 @@ port/protocol aliases"; it is not called /etc/services because that is
 the service manager's folder of definitions), for the socket's
 protocol. The routing table stays numeric.
 
-**ss** (`userland/bin/ss.pas`, units in `userland/ss`, built on
+**ss** (`userland/commands/ss/ss.pas`, units in `userland/commands/ss`, built on
 netstat's units) in the manner of iproute2: the same list of sockets
 (`Ss.Sockets`: netid tcp, udp, or raw for ICMP; ss's states, a UDP or
 ICMP socket with a peer ESTAB, one without UNCONN), connected ones by
@@ -6769,7 +6769,7 @@ ge) against `:22` or a service name, `src`/`dst` against an address
 with a prefix and a port (`10.0.0.0/8`, `[::1]:22`, `*:80`), joined
 with and, or, not and parentheses, in separate words or one.
 
-**nc** (`userland/nc`, `Netcat.*`) with OpenBSD's options. One thread
+**nc** (`userland/commands/nc`, `Netcat.*`) with OpenBSD's options. One thread
 relays (`Netcat.Relay`): it waits on the standard input and the socket
 together and moves whatever is ready, the input first, so a file is
 sent whole before the peer's end is acted on. The peer ending its
@@ -6877,7 +6877,7 @@ and session resumption; **wget** fetches over HTTP and, through it,
 HTTPS. TLS 1.1 and older are not spoken ("protocol version").
 
 ```
-  wget (userland/wget: Wget.Urls, .Transfer, .Sessions, .Observer,
+  wget (userland/commands/wget: Wget.Urls, .Transfer, .Sessions, .Observer,
         .Sinks, .Progress, .Files, .Settings, .Credentials, .Netrc;
         .Recursion, .Links, .Robots, .RobotsCache, .Patterns,
         .LocalPaths, .Downloads, .Converter, .LinkConversion, .FileText)
@@ -7120,7 +7120,7 @@ good staple will do. There is no CRL or OCSP fetching. With certificates not ver
 only the ignored one.
 
 **Roots.** `/etc/ssl/certs/ca-certificates.crt` is the Mozilla CA list
-as a PEM bundle (userland/etc/ssl/certs, MPL-2.0, see its README),
+as a PEM bundle (userland/data/etc/ssl/certs, MPL-2.0, see its README),
 installed by `make system-disk`; `Tls.SystemTrust` reads it (or a file
 the program names) into a trust store (`Tls.TrustStore`, `Tls.Pem`)
 for each session. A root that does not parse is left out.
@@ -7162,7 +7162,7 @@ server's transport parameters (`TlsQuicPeerTransportParameters`) and an
 ALPN protocol (else `TlsErrorApplicationProtocolMissing`, -22,
 no_application_protocol). Without `Quic` nothing changes.
 
-**wget** (`userland/bin/wget.pas`, units in `userland/wget`) is a
+**wget** (`userland/commands/wget/wget.pas`, units in `userland/commands/wget`) is a
 program on top of libhttp (below): each request goes through
 `THttpClient.Execute`, which looks the host up (`Sys.HostLookup`,
 numeric addresses need no DNS), connects within the timeout, runs TLS
@@ -7576,7 +7576,7 @@ certificate checking and suites, the handshake within
 `AltServiceTimeoutMilliseconds` (3 s), then the client's timeout for
 every wait; `EnableHttp3` registers it for "h3".
 
-**h3get** (`userland/bin/h3get.pas`): `h3get [-v] [-s] [-I] [-k] [-o FILE]
+**h3get** (`userland/commands/networking/h3get.pas`): `h3get [-v] [-s] [-I] [-k] [-o FILE]
 [-X METHOD] [-d DATA] [-H 'NAME: VALUE'] [--cacert FILE] [--timeout S]
 [--mtu BYTES] [--fail] https://HOST[:PORT]/PATH`; `-v` shows the address,
 suite, response head, trailers, RTT and packet counts. Exit statuses as
@@ -7926,9 +7926,10 @@ quic-test` (above).
 stock OpenSSH client (`ssh`, `scp`, `sftp` of OpenSSH 9 and later); the
 use in mind is a Raspberry Pi 4 run from a Linux PC. The protocol is in
 **libssh** (`userland/lib/ssh`, libsystem <- libcryptography <- libssh),
-the server program in `userland/sshd`, the SFTP subsystem in
-`userland/sftp-server`, the client programs `ssh`, `ssh-keygen` and
-`ssh-add` in `userland/bin` (the client's units in `userland/ssh`).
+the server program in `userland/system/sshd`, the SFTP subsystem in
+`userland/system/sftp-server`, the client programs `ssh`, `ssh-keygen` and
+`ssh-add` in `userland/commands/ssh` and `userland/commands/networking`
+(the client's units beside `ssh.pas`).
 
 **libssh** is both sides. Its protocol units do no input or output:
 bytes go in, bytes and messages come out, so the host test drives them
@@ -8134,7 +8135,7 @@ PermitUserEnvironment yes.
   connection ends ("Timeout, client not responding"). TCPKeepAlive sets
   the socket option (`SocketOptionKeepAlive`) on the listening sockets.
 
-**The client.** `ssh` (`SshClient.*` in `userland/ssh`) parses OpenSSH's
+**The client.** `ssh` (`SshClient.*` in `userland/commands/ssh`) parses OpenSSH's
 command line (options stop at the destination; `-o` takes the usual
 ssh_config names; no ssh_config file is read), connects, and runs one
 loop like the server's over the socket, standard input, the -L
@@ -8683,7 +8684,7 @@ temporal units cut short or dropped) must be decoded or refused with
 EAv1Error, never anything worse; the test lists how often each coding tool came up
 (`Av1.ToolStatistics`, compiled in only for the test). On the system,
 coretest runs `av1check`, which decodes four small streams built into it
-(`userland/av1check/Av1Check.Streams.inc`, written by
+(`userland/tests/av1check/Av1Check.Streams.inc`, written by
 `tools/Av1Test/make-system-check.py`) on one thread and four and
 compares each frame's hash with aomdec's, then decodes the first again
 from a WebM file through libmedia; a second coretest line has av1check
@@ -8812,7 +8813,7 @@ empty `/var/db/pkg`, `/var/cache/pkg` and `/etc/pkg/keys`.
 
 ### pkg
 
-`pkg` (`userland/bin/pkg.pas`, units `userland/pkg/Pkg.*`) installs
+`pkg` (`userland/commands/pkg/pkg.pas`, units `userland/commands/pkg/Pkg.*`) installs
 package files and packages from repositories, and removes, describes,
 lists, finds (`which`), verifies, searches, updates, upgrades and tests
 them. It links libarchive (tar.zst), libhttp (repositories),
@@ -8922,8 +8923,8 @@ removes it, leaving `hello` alone.
 libjavascript (`userland/lib/javascript`, units `Js.*`, built as
 `libjavascript.so` for amd64 and arm64 on libsystem alone) is an
 ECMAScript engine made for speed and a small footprint, with an
-embedding API for libweb's DOM bindings. `js` (`userland/bin/js.pas`,
-units in `userland/js`) runs a file, `-e` code or a REPL.
+embedding API for libweb's DOM bindings. `js` (`userland/commands/js/js.pas`,
+units in `userland/commands/js`) runs a file, `-e` code or a REPL.
 
 **Values** (`Js.Values`) are 64-bit NaN-boxed words: every double but
 NaN is its own bit pattern, the negative quiet NaN space above the one
@@ -10695,6 +10696,31 @@ after free. A self test takes a count to the limit
 
 ## User mode
 
+### Source layout
+
+The user mode sources are in `userland/`, sorted by what a program is:
+
+| Folder | What is in it | Installed as |
+|---|---|---|
+| `apps/NAME/` | a desktop program: `NAME.pas`, its units, `program.info`, its own `icons/` (browser, files, paint, terminal, taskmanager, notepad, calculator, imageviewer, controlpanel, volumecontrol) | `/app/NAME/` |
+| `apps/demos/NAME/` | the same for the demos and tours (controlsdemo, controlstour, dialogtour) | `/app/NAME/` |
+| `system/` | services, the session programs and the browser's content process: a folder each for those with units (servicemanager, displayserver, sessionmanager, desktop, network, timesync, systemsettings, sshd, sftp-server, webcontent), `login.pas` | `/bin/NAME` |
+| `commands/` | command line tools: `coreutils/` (the standard utilities, a file each), `files/`, `networking/`, `administration/`, `display/`, `media/` and `web/` (the other single-file tools by topic), and a folder each for the tools with units of their own (sh, sed, printf, wget, ssh, pkg, nc, netstat, ss, js, mediaplay, sysinfo, webrender) | `/bin/NAME` |
+| `tests/` | test and benchmark programs: a file each, a folder each for those with units (av1check, dnstest, hangtest, networktest, threadtest) | `/bin/NAME` |
+| `lib/NAME/` | the shared libraries, `libNAME.so` | `/lib` |
+| `data/` | what is not compiled: `etc/` (copied to `/etc`), `fonts/` (the outline fonts and their licences), `icons/` (`make-icons.py`, which draws the icon theme and the pointers' pictures), `pointers/` | `/etc`, `/lib/fonts`, `/usr/share/icons`, `/lib/pointers` |
+
+A program with units of its own keeps them all in one folder named
+after it, beside `NAME.pas`; the program's name is the folder's and
+the file's. `userland/userland.mk` finds the programs by these rules
+(`USER_PROGRAM_SOURCES`, `APP_PROGRAM_FOLDERS`): every `.pas` in
+`system/`, `tests/` and the groups of `commands/`
+(`SINGLE_FILE_PROGRAM_FOLDERS`), every other folder of those areas as
+one program, and every folder of `apps/` and `apps/demos/` with a
+`program.info`; two programs may not share a name. Where a source is
+says nothing about where it is installed: everything but the apps goes
+to `/bin`.
+
 ### Processes and address spaces
 
 Each user process has its own top level page table. The kernel half is
@@ -11506,7 +11532,7 @@ processor kept busy), `rss`, `vsz`, `time`, the real `tty` and the
 command line (`args`; another user's shows as `[name]`); `top` the
 busiest processes since its last look, again every few seconds (`-b`
 batch, `-d` delay, `-n` count). `sysinfo` shows the system at a glance
-beside a logo (units in `userland/sysinfo`: `SystemInfo.Facts` gathers,
+beside a logo (units in `userland/commands/sysinfo`: `SystemInfo.Facts` gathers,
 `SystemInfo.Logo` holds the ASCII logo): user and machine, system, the
 machine's model as "Host" (`CallGetMachineModel`, kernel
 `Drivers.MachineModel`: the device tree's root `model`, "Raspberry Pi 5
@@ -12143,7 +12169,7 @@ and an event in a message, changes the section and signals the event.
 ### Startup, services and sessions
 
 **Boot modes.** Without `init=`, the first program is the service
-manager (`servicemanager`, units in `userland/servicemanager`). It
+manager (`servicemanager`, units in `userland/system/servicemanager`). It
 reads the boot mode from the kernel's command line (`CallGetKernelOptions`,
 `Sys.KernelOptions`: anyone may read it): `mode=text` or `mode=graphical`
 (the default). Each service lists the modes it belongs to:
@@ -12160,7 +12186,7 @@ reads the boot mode from the kernel's command line (`CallGetKernelOptions`,
 | `timesync` | text, graphical | the SNTP client, off by default (see "Time synchronization"; needs `network`) |
 
 **Service definitions** are `/etc/services/NAME.service` (installed from
-`userland/etc/services`), lines of `key = value` (`Services.Definitions`):
+`userland/data/etc/services`), lines of `key = value` (`Services.Definitions`):
 `description`, `program` (required), `arguments` (double quotes keep
 spaces), `user` (root), `needs` (services that must be running and
 ready first), `modes`, `restart` (`never`, `on-failure`, `always`),
@@ -12246,7 +12272,7 @@ logs in the user the kernel option `autologin=` names, which the text
 mode's console service uses (every console login is then automatic).
 
 **The graphical session.** The session manager (`sessionmanager`,
-units in `userland/sessionmanager`, root) connects to the display
+units in `userland/system/sessionmanager`, root) connects to the display
 server and shows the login window (`Session.LoginWindow`: a user name, a
 password box that shows dots - `TEditBox.HidesText` in libcontrols - and
 OK). Right ones start `/bin/desktop` as the user, in a new session
@@ -12303,7 +12329,7 @@ of the lock screen's box and button (`lock-password`, `lock-unlock`),
 `resumed`.
 
 **The system settings service.** `systemsettings` (units in
-`userland/systemsettings`, root) makes the changes to the machine that
+`userland/system/systemsettings`, root) makes the changes to the machine that
 only root may make, for the users who may ask for them, and keeps what
 is to last in the system's settings (`SystemSettings.Remembered`). At
 start it gives the kernel the remembered time zone (`Time/Zone`), each
@@ -12373,7 +12399,7 @@ it and the desktop and its clock are back. The input test checks that
 
 ### Time synchronization
 
-`timesync` (units in `userland/timesync`, the `timesync` service, which
+`timesync` (units in `userland/system/timesync`, the `timesync` service, which
 needs `network`) keeps the wall clock to time servers over SNTP (RFC
 4330). It is off by default: with `TimeSync/Enabled` false in
 `/etc/settings/TimeSync.settings` it logs so and ends (it stays
@@ -12779,10 +12805,11 @@ first `/app/*/NAME`), so typing `notepad` in the shell or a terminal,
 `env`, the desktop, Files' file associations and the Volume Control's
 Sound Settings all find them, and the shell completes their names.
 
-In the source tree each such program is a folder `userland/NAME/`
-with `NAME.pas` (the program), its units, its `program.info` and its
-optional `icons/`. `userland/userland.mk` builds every folder that has
-a `program.info` (`APP_NAMES`) into `build/ARCH/user/app/NAME/`, and
+In the source tree each such program is a folder `userland/apps/NAME/`
+(the demos and tours in `userland/apps/demos/NAME/`) with `NAME.pas`
+(the program), its units, its `program.info` and its optional `icons/`.
+`userland/userland.mk` builds every folder that has a `program.info`
+(`APP_NAMES`) into `build/ARCH/user/app/NAME/`, and
 `scripts/make-system-disk.sh` copies that to `/app` on the system disk,
 for both architectures.
 
@@ -13044,18 +13071,18 @@ independent) against the Free Pascal runtime library:
   one size match; `dejavu-sans` and `dejavu-sans-mono`, DejaVu Sans and
   DejaVu Sans Mono 2.37, TrueType, regular and bold (with obliques in
   the full set); the other outline fonts, see "Fonts" below; all of them
-  kept in `userland/fonts` and put in by the build). Listing a family reads
+  kept in `userland/data/fonts` and put in by the build). Listing a family reads
   only the start of each file, its size and weight (for a TrueType font
   its table directory, head and OS/2); a face's glyphs are read the
   first time it is picked, so a program does not load every size. Sizes
   are in points, so text is the same size on any display.
 
   Fonts. The outline fonts are all freely licensed and kept in the
-  repository, in `userland/fonts/<family>/`, each family with its
+  repository, in `userland/data/fonts/<family>/`, each family with its
   `LICENSE` (where the fonts come from, their copyright and licence as
   they state them, the licence's full text) and a `SOURCE` line
   (upstream, version, the Arch Linux package they were taken from);
-  `userland/fonts/MANIFEST` lists them all (family, directory, files,
+  `userland/data/fonts/MANIFEST` lists them all (family, directory, files,
   licence, version, package). Licences: SIL OFL 1.1 (Liberation, Noto
   with CJK and colour emoji, Source Sans 3, Cantarell, Roboto, Open
   Sans, Inconsolata), Bitstream Vera with DejaVu's public-domain
@@ -13070,7 +13097,7 @@ independent) against the Free Pascal runtime library:
   `base-files` when the set takes only some of its files), with each
   family's LICENSE and SOURCE and the set's rows of the MANIFEST.
   `make update-fonts` (`scripts/update-fonts.py`, run by hand) refreshes
-  `userland/fonts` from the build machine's packages, taking a family
+  `userland/data/fonts` from the build machine's packages, taking a family
   only when all its files are there, its licence file says what the
   list expects and every font's own name table (copyright, licence
   description) agrees; anything else is skipped with a message and
@@ -13089,7 +13116,7 @@ independent) against the Free Pascal runtime library:
   or `base` (DejaVu Sans and Sans Mono regular and bold: what the host
   tests lay pages out with, in build/tools/base-fonts, so their expected
   layouts do not change when fonts are added; the web layout test's
-  system font matching uses all of `userland/fonts`, and the font
+  system font matching uses all of `userland/data/fonts`, and the font
   test's CFF, collection, variable and emoji fixtures are made from the
   repository's files). The system disk
   grows with its contents (at least 64 MiB; 160 MiB with the full set).
@@ -13097,7 +13124,7 @@ independent) against the Free Pascal runtime library:
   dialog) may be any of them. A family's italic faces are left out of
   its font set (the interface draws upright text).
 
-  `Font.Configuration` reads `/etc/fonts.conf` (userland/etc): in
+  `Font.Configuration` reads `/etc/fonts.conf` (userland/data/etc): in
   `[families]`, a generic family or font name and the families that
   stand for it (the first installed taken); in `[fallback]`, the
   default chain; in `[scripts]`, a script's code point ranges and the
@@ -13226,7 +13253,7 @@ independent) against the Free Pascal runtime library:
   colour through libimage, DejaVu Sans made into WOFF2 by woff2_compress
   unwrapped glyph for glyph as the original (every truncation refused),
   randomly damaged CFF data never raising, Liberation Sans with Arial's
-  advances, and userland/etc/fonts.conf read.
+  advances, and userland/data/etc/fonts.conf read.
   On the system, `drawtest` draws a window on the display in DejaVu
   Sans, everything sized by the display's scale and DPI; the input test
   checks it in a screen dump.
@@ -13303,7 +13330,7 @@ independent) against the Free Pascal runtime library:
   builtins about running commands (`eval`, `exec`, `command`, `type`,
   `return`, `local`) are in `Shell.CommandBuiltins`; job control (see
   "Job control") in `Shell.Jobs` and `Shell.JobBuiltins`.
-- **coreutils** – one program per file in `userland/bin`.
+- **coreutils** – one program per file in `userland/commands/coreutils`.
 
 Units may have initialization and finalization sections and threadvars
 (see "Thread-local storage and initialization"); the libraries themselves
@@ -16747,7 +16774,7 @@ its fallback.
 ### Text (Web.Text)
 
 `Web.Text.Fonts` lists the faces under the font directory (/lib/fonts;
-the host tools point it at userland/fonts): a subdirectory per family
+the host tools point it at userland/data/fonts): a subdirectory per family
 ("liberation-sans" is "Liberation Sans"), each .ttf, .otf or .ttc file a
 face (a collection's first), weight and slant from its header
 (`Font.Summaries`, a few hundred bytes read), so a face's file is read
@@ -17298,7 +17325,7 @@ the build machine about 30 ms to lay out 8000 nodes, one box per node,
 
 `webrender [-w WIDTH] [-h HEIGHT] [-s SCALE] [-f FONTDIR] [-l] [-t]
 PAGE.html [OUT.png]` (in /bin, and `make webrender` on the host as
-build/tools/webrender with `-f userland/fonts`) renders a page to a PNG
+build/tools/webrender with `-f userland/data/fonts`) renders a page to a PNG
 (-t: the whole document) or prints its layout tree (-l); stylesheets and
 images referred to by relative URLs are read from beside the page.
 
@@ -17407,7 +17434,7 @@ the first element matching, scrolled into view (X,Y is a point).
 quiet.
 
 webbrowse reads the system's font configuration beside its font
-directory (`userland/etc/fonts.conf` for `userland/fonts`), so pages get
+directory (`userland/data/etc/fonts.conf` for `userland/data/fonts`), so pages get
 the families the system gives them (Arial Liberation Sans, Helvetica
 Nimbus Sans) rather than the library's built-in DejaVu Sans.
 
@@ -17890,10 +17917,10 @@ and the encoding override in frames.
 
 ## Browser
 
-`browser` (`userland/browser`, installed as `/app/browser`) is Tuxcat,
+`browser` (`userland/apps/browser`, installed as `/app/browser`) is Tuxcat,
 the web browser: "Tuxcat" in the Internet category, its window titles,
 menus and About box, with the `app-web-browser` icon (also
-`app-tuxcat`), a tuxedo cat drawn by `userland/icons/iconkit/cats.py`
+`app-tuxcat`), a tuxedo cat drawn by `userland/data/icons/iconkit/cats.py`
 like the rest of the set. It is a web browser on libwebview (its pages in content processes: "Browser process
 model" below), linked with libquic for HTTP/3. Its chrome - the windows,
 menus, toolbars, dialogs, history, bookmarks, downloads and settings -
@@ -18141,8 +18168,8 @@ crash would end the browser either way while the UI and the network
 share the profile). Splitting it out later needs only another endpoint
 for the same messages.
 
-Content processes are `/bin/webcontent` (`userland/bin/webcontent.pas`,
-units in `userland/webcontent`), started by libwebview's process manager
+Content processes are `/bin/webcontent` (`userland/system/webcontent/webcontent.pas`,
+units in `userland/system/webcontent`), started by libwebview's process manager
 (`WebView.ContentProcesses`) with its end of a channel passed as a
 handle (`ProcessPassHandles`) and its options on the command line
 (`--channel`, `--site`, `--scale`, `--script-limit`, `--memory-limit`,

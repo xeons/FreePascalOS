@@ -415,7 +415,7 @@ const
   { --- The clock, the time zone and the keyboard ----------------------------
     Settings of the machine that the kernel keeps for everyone: anyone
     may read them, only root may change them (ErrorNotPermitted). The
-    system settings service (userland/systemsettings) gives the kernel
+    system settings service (userland/system/systemsettings) gives the kernel
     the remembered ones at start. }
 
   { (UnixTime): sets the wall clock to UnixTime (seconds since

@@ -337,7 +337,7 @@ c-toolchain`); without it `make system-disk` leaves those ports out.
 - OpenSSL (`openssl`) and Python 3's ssl module, for the HTTPS tests of
   `make test` (the test servers on the host)
 - The console's font: Terminus (`terminus-font`); the outline fonts
-  (DejaVu, Liberation, Noto, ...) come with the source (`userland/fonts`)
+  (DejaVu, Liberation, Noto, ...) come with the source (`userland/data/fonts`)
 - Python's Pillow (`python-pillow`) and FreeType (`freetype2`, which
   Pillow uses; or `python-freetype-py`), for the host tests' fixtures
 - Python's cairo bindings (`python-cairo`), which draw the icons and the
@@ -546,24 +546,27 @@ userland/
   lib/coreutils/    libcoreutils.so: the Util.* units shared by the tools
   lib/configuration/ libconfiguration.so: the Configuration.* units (settings)
   lib/plugin/       libplugin.so, loaded at run time by coretest
-  bin/              One file per program (/bin/<name>)
-  <name>/program.info  A graphical program's folder: <name>.pas, its units,
+  apps/<name>/      A desktop program's folder: <name>.pas, its units,
                     program.info and own icons, installed as /app/<name>
-  sh/               The shell's units (lexer, parser, expansion, execution)
-  notepad/          Notepad (files, the document, menus, Go To)
-  files/            The file manager's units (views, places, operations)
-  controlpanel/     The Control Panel's units (the window, one per page,
-                    the dialogs, asking for an administrator's password)
-  systemsettings/   The system settings service's units (who may, what
-                    it changes, what it remembers, its port)
-  network/          The network service's units (settings, the DHCP client,
-                    its messages and leases, the interfaces, state files)
-  dnstest/          dnstest's DNS server and its fixed zone
-  wget/             wget's units (URLs, HTTP, connections, progress)
-  etc/              Files installed in /etc (accounts, services, settings,
+                    (browser, files, paint, terminal, notepad, ...)
+  apps/demos/       The controls demo and the controls and dialogs tours
+  system/           Services, the session programs and the browser's
+                    content process (servicemanager, displayserver,
+                    sessionmanager, desktop, network, sshd, ...), installed
+                    in /bin
+  commands/         Command line tools, installed in /bin: coreutils/ (the
+                    standard utilities, a file each), files/, networking/,
+                    administration/, display/, media/ and web/ (other
+                    single-file tools) and a folder for each tool with units
+                    of its own (sh, sed, wget, ssh, pkg, nc, netstat, ...)
+  tests/            Test and benchmark programs, installed in /bin; a
+                    folder for those with units of their own
+  data/etc/         Files installed in /etc (accounts, services, settings,
                     the Mozilla CA list in ssl/certs)
-  fonts/            DejaVu Sans and DejaVu Sans Mono (TrueType, with their
-                    licence), installed in /lib/fonts
+  data/fonts/       The outline fonts with their licences, installed in
+                    /lib/fonts
+  data/icons/       make-icons.py, which draws the icon theme and pointers
+  data/pointers/    The pointers' descriptions, installed in /lib/pointers
   userland.mk       Userland build rules (included by the Makefile)
 tools/PsfToPascal/  Converts a PSF console font into a Pascal include file
 tools/DrawingTest/  Checks libdrawing and libfont on the host
@@ -595,11 +598,11 @@ Terminus (ter-116n), distributed under the SIL Open Font License 1.1; the
 license is in `kernel/debug/Debug.ConsoleFont.LICENSE`.
 
 The system volume carries Terminus (`/lib/fonts/terminus`, SIL Open Font
-License 1.1) and the outline fonts kept in `userland/fonts` (DejaVu,
+License 1.1) and the outline fonts kept in `userland/data/fonts` (DejaVu,
 Liberation, Noto, Source Sans 3, Cantarell, Roboto, Open Sans, Hack,
 Inconsolata, the URW base 35 and Droid Sans Fallback, under the SIL OFL
 1.1, the Bitstream Vera licence, MIT, AGPL 3.0 with URW's font exception
-and Apache 2.0; `userland/fonts/MANIFEST` lists them), each family with
+and Apache 2.0; `userland/data/fonts/MANIFEST` lists them), each family with
 its licence and source in the same directory.
 
 The `firmware/` folder holds firmware that devices load into themselves
@@ -612,7 +615,7 @@ GNU General Public License; it is distributed alongside FreePascalOS
 under its vendors' terms, and installed with its licences as
 /lib/firmware.
 
-`userland/etc/ssl/certs/ca-certificates.crt` is the Mozilla CA
+`userland/data/etc/ssl/certs/ca-certificates.crt` is the Mozilla CA
 certificate list (from NSS's certdata.txt, as packaged in
 ca-certificates-mozilla), distributed under the Mozilla Public License
 2.0; its README in the same directory says where it came from. It is

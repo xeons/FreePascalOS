@@ -22,7 +22,7 @@ letters as text, anything else separating them, so 1.10 > 1.9 and
 when it is alpha, beta, pre or rc (1.0rc1 < 1.0) and otherwise comes
 after the number (1.0a > 1.0, as OpenSSL's 1.1.1w). The package's
 revision (the port's own changes) comes after: 1.0_2 > 1.0_1 > 1.0.
-pkg (userland/pkg/Pkg.Versions.pas) compares the same way; the host
+pkg (userland/commands/pkg/Pkg.Versions.pas) compares the same way; the host
 tests check both on the same pairs.
 
 A dependency is NAME, or NAME OP VERSION with OP one of >= <= > < =,

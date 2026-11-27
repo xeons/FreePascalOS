@@ -1,11 +1,11 @@
 # The outline fonts the system has (/lib/fonts), all freely licensed.
-# They are kept in git, in userland/fonts/<family>/ with a LICENSE (the
+# They are kept in git, in userland/data/fonts/<family>/ with a LICENSE (the
 # licence's full text and the copyright as each font states it) and a
-# SOURCE line each, and userland/fonts/MANIFEST lists them all. The
+# SOURCE line each, and userland/data/fonts/MANIFEST lists them all. The
 # build takes them from there (scripts/install-fonts.py), never from
 # the build machine's own fonts. The paths below are where the fonts are
 # on an Arch Linux machine: scripts/update-fonts.py (make update-fonts,
-# run by hand) refreshes userland/fonts from those packages, taking a
+# run by hand) refreshes userland/data/fonts from those packages, taking a
 # family only if its licence file and every font's name table say what
 # is expected here.
 #

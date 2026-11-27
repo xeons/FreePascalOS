@@ -57,7 +57,7 @@ uses
 
 const
   { The fonts pages are laid out with: DejaVu Sans and Sans Mono, regular
-    and bold (the base set of userland/fonts, put there by make). }
+    and bold (the base set of userland/data/fonts, put there by make). }
   TestFontDirectory = 'build/tools/base-fonts';
 
 type

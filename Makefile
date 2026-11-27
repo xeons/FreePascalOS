@@ -128,7 +128,7 @@
 #                   (build/toolchain/llvm; optional, long)
 #   make image      Build a GPT disk image that can be written to a USB stick
 #   make font       Regenerate the console font include from a PSF font
-#   make update-fonts  Refresh the outline fonts in userland/fonts from the
+#   make update-fonts  Refresh the outline fonts in userland/data/fonts from the
 #                   build machine's font packages (scripts/fonts.list)
 #   make clean      Remove all build output
 #
@@ -929,15 +929,15 @@ $(ACPI_POWER_TABLE): tools/AcpiPowerTest/make-table.py
 acpi-power-test: $(ACPI_POWER_TEST) $(ACPI_POWER_TABLE)
 	$(ACPI_POWER_TEST) $(ACPI_POWER_TABLE)
 
-# The timesync service's SNTP code (userland/timesync) on the host:
+# The timesync service's SNTP code (userland/system/timesync) on the host:
 # packets, corrections, and requests over UDP to tools/SntpTest's small
 # server on 127.0.0.1 (its clock 1234.5 s ahead, and a kiss of death).
 SNTP_TEST := build/tools/SntpTest
 SNTP_PORT_FILE := build/tools/sntp-test-ports
 
-$(SNTP_TEST): tools/SntpTest/SntpTest.pas userland/timesync/TimeSync.Packets.pas userland/timesync/TimeSync.Corrections.pas
+$(SNTP_TEST): tools/SntpTest/SntpTest.pas userland/system/timesync/TimeSync.Packets.pas userland/system/timesync/TimeSync.Corrections.pas
 	@mkdir -p build/tools/sntp-units
-	$(FPC) -O2 -Cr -Fuuserland/timesync -FEbuild/tools -FUbuild/tools/sntp-units $<
+	$(FPC) -O2 -Cr -Fuuserland/system/timesync -FEbuild/tools -FUbuild/tools/sntp-units $<
 
 sntp-test: $(SNTP_TEST)
 	@: > $(SNTP_PORT_FILE); \
@@ -1070,7 +1070,7 @@ font: $(FONT_TOOL)
 	$(FONT_TOOL) $(FONT_UNPACKED) kernel/debug/Debug.ConsoleFont.inc
 
 # The fonts the host tests lay pages out with (their expected layouts
-# were made with these): the base set of userland/fonts, DejaVu Sans and
+# were made with these): the base set of userland/data/fonts, DejaVu Sans and
 # Sans Mono regular and bold.
 BASE_FONTS_DIRECTORY := build/tools/base-fonts
 BASE_FONTS_STAMP := $(BASE_FONTS_DIRECTORY)/.installed
@@ -1078,7 +1078,7 @@ $(BASE_FONTS_STAMP): $(OUTLINE_FONT_FILES) $(FONT_SCRIPTS)
 	python3 -B scripts/install-fonts.py scripts/fonts.list $(OUTLINE_FONT_SOURCE) $(BASE_FONTS_DIRECTORY) --set base
 	@touch $@
 
-# The outline fonts in userland/fonts refreshed from the build machine's
+# The outline fonts in userland/data/fonts refreshed from the build machine's
 # font packages, with their licences checked (scripts/update-fonts.py);
 # run by hand, then look at what changed before committing it.
 update-fonts:
@@ -1124,7 +1124,7 @@ $(FONT_TEST): $(FONT_TEST_SOURCES)
 $(FONT_FIXTURES_STAMP): $(FONT_FIXTURE_SCRIPTS) $(OUTLINE_FONT_FILES)
 	@python3 -c 'import PIL' 2>/dev/null || { echo "Python 3 with Pillow (PIL) is needed for the font test's references (python-pillow)"; exit 1; }
 	@rm -rf $(FONT_FIXTURES)
-	python3 -B tools/FontTest/make-font-fixtures.py $(FONT_FIXTURES) userland/fonts
+	python3 -B tools/FontTest/make-font-fixtures.py $(FONT_FIXTURES) userland/data/fonts
 	@touch $@
 
 font-test: $(FONT_TEST) $(FONT_FIXTURES_STAMP)
@@ -1175,13 +1175,13 @@ chart-test: $(CHART_TEST)
 # Image menu's transforms, the zoomed view) need only libimage and
 # libdrawing, so they build for the host too and are checked there.
 PAINT_TEST := build/tools/PaintTest
-PAINT_TEST_SOURCES := $(wildcard tools/PaintTest/*.pas) $(wildcard userland/paint/*.pas) \
+PAINT_TEST_SOURCES := $(wildcard tools/PaintTest/*.pas) $(wildcard userland/apps/paint/*.pas) \
 	$(wildcard userland/lib/drawing/*.pas) $(wildcard userland/lib/image/*.pas) \
 	$(wildcard userland/lib/compression/*.pas)
 
 $(PAINT_TEST): $(PAINT_TEST_SOURCES)
 	@mkdir -p build/tools/paint-test-units
-	fpc -Mobjfpc -O2 -Cr -vew -Futools/PaintTest -Fuuserland/paint -Fuuserland/lib/image -Fuuserland/lib/drawing \
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/PaintTest -Fuuserland/apps/paint -Fuuserland/lib/image -Fuuserland/lib/drawing \
 		-Fuuserland/lib/compression -FUbuild/tools/paint-test-units -o$@ tools/PaintTest/PaintTest.pas
 
 paint-test: $(PAINT_TEST)
@@ -1199,23 +1199,23 @@ FILES_TEST := build/tools/FilesTest
 FILES_TEST_SOURCES := tools/FilesTest/FilesTest.pas userland/lib/controls/Controls.DragData.pas \
 	userland/lib/controls/Controls.FileLists.pas userland/lib/controls/Controls.Clipboard.pas \
 	userland/lib/controls/Controls.TypeAhead.pas userland/lib/controls/Controls.TextPositions.pas \
-	userland/lib/controls/Controls.FileNames.pas userland/files/FileManager.Items.pas \
-	userland/files/FileManager.Paths.pas userland/files/FileManager.ConflictNames.pas \
-	userland/files/FileManager.History.pas userland/files/FileManager.FileTypes.pas \
-	userland/files/FileManager.ItemOrder.pas userland/files/FileManager.Permissions.pas \
-	userland/files/FileManager.DropRules.pas userland/lib/font/Font.Utf8.pas tools/FilesTest/FilesTest.Explorer.pas \
+	userland/lib/controls/Controls.FileNames.pas userland/apps/files/FileManager.Items.pas \
+	userland/apps/files/FileManager.Paths.pas userland/apps/files/FileManager.ConflictNames.pas \
+	userland/apps/files/FileManager.History.pas userland/apps/files/FileManager.FileTypes.pas \
+	userland/apps/files/FileManager.ItemOrder.pas userland/apps/files/FileManager.Permissions.pas \
+	userland/apps/files/FileManager.DropRules.pas userland/lib/font/Font.Utf8.pas tools/FilesTest/FilesTest.Explorer.pas \
 	userland/lib/controls/Controls.NaturalOrder.pas userland/lib/coreutils/Util.TrashInfo.pas \
-	userland/files/FileManager.FileKinds.pas userland/files/FileManager.CivilDates.pas \
-	userland/files/FileManager.SearchQuery.pas userland/files/FileManager.BatchNames.pas \
-	userland/files/FileManager.UndoHistory.pas userland/files/FileManager.ConflictPolicy.pas \
-	userland/files/FileManager.TypeAssociations.pas userland/lib/configuration/Configuration.ProgramInfo.pas \
-	userland/files/FileManager.Grouping.pas userland/files/FileManager.AudioInfo.pas \
-	userland/files/FileManager.ArchiveSearch.pas tools/FilesTest/FilesTest.ArchiveSearch.pas \
+	userland/apps/files/FileManager.FileKinds.pas userland/apps/files/FileManager.CivilDates.pas \
+	userland/apps/files/FileManager.SearchQuery.pas userland/apps/files/FileManager.BatchNames.pas \
+	userland/apps/files/FileManager.UndoHistory.pas userland/apps/files/FileManager.ConflictPolicy.pas \
+	userland/apps/files/FileManager.TypeAssociations.pas userland/lib/configuration/Configuration.ProgramInfo.pas \
+	userland/apps/files/FileManager.Grouping.pas userland/apps/files/FileManager.AudioInfo.pas \
+	userland/apps/files/FileManager.ArchiveSearch.pas tools/FilesTest/FilesTest.ArchiveSearch.pas \
 	$(wildcard userland/lib/archive/*.pas)
 
 $(FILES_TEST): $(FILES_TEST_SOURCES)
 	@mkdir -p build/tools/files-test-units
-	fpc -Mobjfpc -O2 -vew -Futools/FilesTest -Fuuserland/lib/controls -Fuuserland/lib/font -Fuuserland/files \
+	fpc -Mobjfpc -O2 -vew -Futools/FilesTest -Fuuserland/lib/controls -Fuuserland/lib/font -Fuuserland/apps/files \
 		-Fuuserland/lib/configuration -Fiuserland/lib/configuration -Fuuserland/lib/coreutils \
 		-Fuuserland/lib/archive -Fuuserland/lib/compression \
 		-FUbuild/tools/files-test-units -o$@ tools/FilesTest/FilesTest.pas
@@ -1229,16 +1229,16 @@ files-test: $(FILES_TEST)
 # queries, bookmark folders and tags, the location bar's suggestions,
 # the session file, the search engines) builds for the host too.
 BROWSER_TEST := build/tools/BrowserTest
-BROWSER_TEST_SOURCES := tools/BrowserTest/BrowserTest.pas userland/browser/Browser.TextFiles.pas \
-	userland/browser/Browser.Addresses.pas userland/browser/Browser.History.pas \
-	userland/browser/Browser.Bookmarks.pas userland/browser/Browser.AwesomeBar.pas \
-	userland/browser/Browser.SessionStore.pas userland/browser/Browser.SearchEngines.pas \
-	userland/browser/Browser.Keywords.pas userland/browser/Browser.ConsoleLog.pas \
-	userland/browser/Browser.SourceColoring.pas userland/browser/Browser.Passwords.pas
+BROWSER_TEST_SOURCES := tools/BrowserTest/BrowserTest.pas userland/apps/browser/Browser.TextFiles.pas \
+	userland/apps/browser/Browser.Addresses.pas userland/apps/browser/Browser.History.pas \
+	userland/apps/browser/Browser.Bookmarks.pas userland/apps/browser/Browser.AwesomeBar.pas \
+	userland/apps/browser/Browser.SessionStore.pas userland/apps/browser/Browser.SearchEngines.pas \
+	userland/apps/browser/Browser.Keywords.pas userland/apps/browser/Browser.ConsoleLog.pas \
+	userland/apps/browser/Browser.SourceColoring.pas userland/apps/browser/Browser.Passwords.pas
 
 $(BROWSER_TEST): $(BROWSER_TEST_SOURCES)
 	@mkdir -p build/tools/browser-test-units
-	fpc -Mobjfpc -O2 -Cr -vew -Futools/BrowserTest -Fuuserland/browser -FUbuild/tools/browser-test-units -o$@ \
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/BrowserTest -Fuuserland/apps/browser -FUbuild/tools/browser-test-units -o$@ \
 		tools/BrowserTest/BrowserTest.pas
 
 browser-test: $(BROWSER_TEST)
@@ -1269,13 +1269,13 @@ controls-test: $(CONTROLS_TEST)
 # and the volume control (peak levels) builds for the host too, and is
 # checked there.
 APPS_TEST := build/tools/AppsTest
-APPS_TEST_SOURCES := $(wildcard tools/AppsTest/*.pas) $(wildcard userland/calculator/Calculator.*.pas) \
-	$(wildcard userland/imageviewer/ImageViewer.*.pas) $(wildcard userland/volumecontrol/VolumeControl.*.pas)
+APPS_TEST_SOURCES := $(wildcard tools/AppsTest/*.pas) $(wildcard userland/apps/calculator/Calculator.*.pas) \
+	$(wildcard userland/apps/imageviewer/ImageViewer.*.pas) $(wildcard userland/apps/volumecontrol/VolumeControl.*.pas)
 
 $(APPS_TEST): $(APPS_TEST_SOURCES)
 	@mkdir -p build/tools/apps-test-units
-	fpc -Mobjfpc -O2 -Cr -vew -Futools/AppsTest -Fuuserland/calculator -Fuuserland/imageviewer \
-		-Fuuserland/volumecontrol -FUbuild/tools/apps-test-units -o$@ tools/AppsTest/AppsTest.pas
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/AppsTest -Fuuserland/apps/calculator -Fuuserland/apps/imageviewer \
+		-Fuuserland/apps/volumecontrol -FUbuild/tools/apps-test-units -o$@ tools/AppsTest/AppsTest.pas
 
 apps-test: $(APPS_TEST)
 	@$(APPS_TEST) > build/tools/apps-test.out || \
@@ -1452,7 +1452,7 @@ wasm-spec-test-3: $(WASM_SPEC_TEST)
 
 # libsvg on the host (with libcss, libdrawing, libfont and libimage): small
 # SVG documents drawn and their pixels probed where each feature decides
-# the colour, with DejaVu Sans from userland/fonts for text. SvgTest FONTS
+# the colour, with DejaVu Sans from userland/data/fonts for text. SvgTest FONTS
 # IN.svg OUT.png W H draws a file, for looking at.
 SVG_TEST := build/tools/SvgTest
 SVG_TEST_UNITS := build/tools/svg-test-units
@@ -1468,7 +1468,7 @@ $(SVG_TEST): $(SVG_TEST_SOURCES)
 		-FU$(SVG_TEST_UNITS) -o$@ tools/SvgTest/SvgTest.pas
 
 svg-test: $(SVG_TEST)
-	@$(SVG_TEST) userland/fonts > build/tools/svg-test.out || \
+	@$(SVG_TEST) userland/data/fonts > build/tools/svg-test.out || \
 		{ grep FAIL build/tools/svg-test.out; echo "SVG TEST FAILED (build/tools/svg-test.out)"; exit 1; }
 	@echo "SVG TEST PASSED: $$(tail -n 1 build/tools/svg-test.out | cut -d ' ' -f 3-)"
 
@@ -1698,7 +1698,7 @@ $(TLS_TEST): $(TLS_TEST_SOURCES)
 tls-test: $(TLS_TEST)
 	@python3 -I -c 'from cryptography import x509' 2>/dev/null || { echo "Python 3 with the cryptography package is needed for the TLS test's fixtures"; exit 1; }
 	@python3 -I tools/TlsTest/make-fixtures.py tools/TlsTest/certificates $(TLS_FIXTURES)
-	@$(TLS_TEST) tools/TlsTest/certificates userland/etc/ssl/certs/ca-certificates.crt $(TLS_FIXTURES) > build/tools/tls-test.out || \
+	@$(TLS_TEST) tools/TlsTest/certificates userland/data/etc/ssl/certs/ca-certificates.crt $(TLS_FIXTURES) > build/tools/tls-test.out || \
 		{ grep -A2 FAIL build/tools/tls-test.out; echo "TLS TEST FAILED (build/tools/tls-test.out)"; exit 1; }
 	@echo "TLS TEST PASSED: $$(tail -n 1 build/tools/tls-test.out | cut -d ' ' -f 3-)"
 	@tools/TlsTest/run-interop.sh $(TLS_TEST) $(TLS_FIXTURES) > build/tools/tls-interop.out 2>&1 || \
@@ -1714,7 +1714,7 @@ SSH_VECTORS := $(SSH_TEST_UNITS)/SshTest.Vectors.inc
 SSH_CLIENT_VECTORS := $(SSH_TEST_UNITS)/SshTest.ClientVectors.inc
 SSH_TEST_SOURCES := $(wildcard tools/SshTest/*.pas) tools/CryptoTest/TestChecks.pas tools/TlsTest/Crypto.Random.pas \
 	$(filter-out %/Crypto.Random.pas %/Crypto.Contents.pas,$(wildcard userland/lib/cryptography/*.pas)) \
-	$(filter-out %/Ssh.Contents.pas,$(wildcard userland/lib/ssh/*.pas)) userland/sshd/Sshd.Configuration.pas
+	$(filter-out %/Ssh.Contents.pas,$(wildcard userland/lib/ssh/*.pas)) userland/system/sshd/Sshd.Configuration.pas
 
 $(SSH_VECTORS): tools/SshTest/make-vectors.py
 	@mkdir -p $(SSH_TEST_UNITS)
@@ -1732,7 +1732,7 @@ $(SSH_CLIENT_VECTORS): tools/SshTest/make-client-vectors.py
 
 $(SSH_TEST): $(SSH_TEST_SOURCES) $(SSH_VECTORS) $(SSH_CLIENT_VECTORS)
 	@mkdir -p $(SSH_TEST_UNITS)
-	fpc -Mobjfpc -O2 -vew -Futools/SshTest -Futools/CryptoTest -Futools/TlsTest -Fuuserland/lib/ssh -Fuuserland/sshd \
+	fpc -Mobjfpc -O2 -vew -Futools/SshTest -Futools/CryptoTest -Futools/TlsTest -Fuuserland/lib/ssh -Fuuserland/system/sshd \
 		-Fuuserland/lib/cryptography -Fushared -Fishared -Fi$(SSH_TEST_UNITS) -FU$(SSH_TEST_UNITS) -o$@ tools/SshTest/SshTest.pas
 
 ssh-test: $(SSH_TEST)
@@ -1916,8 +1916,8 @@ test262-expectations: $(TEST262_TOOL)
 # libdrawing and libimage): the reference pages of tools/WebTest/render
 # laid out and their layout tree dumps compared with the .txt files
 # beside them (with DejaVu Sans and Sans Mono, the base set of
-# userland/fonts, in build/tools/base-fonts; the system font matching
-# with all of userland/fonts and userland/etc/fonts.conf), incremental
+# userland/data/fonts, in build/tools/base-fonts; the system font matching
+# with all of userland/data/fonts and userland/data/etc/fonts.conf), incremental
 # relayout after DOM changes against fresh layouts, hit testing,
 # painting (known pixels, damaged rectangles), and the speed and memory
 # of a large page ("perf" lines). make web-layout-update rewrites the
@@ -1943,7 +1943,7 @@ $(WEB_LAYOUT_TEST): $(WEB_LAYOUT_TEST_SOURCES) $(WEB_LAYOUT_TEST_UNITS)/.generat
 		-Fi$(WEB_LAYOUT_TEST_UNITS) -FU$(WEB_LAYOUT_TEST_UNITS) -o$@ tools/WebLayoutTest/WebLayoutTest.pas
 
 web-layout-test: $(WEB_LAYOUT_TEST) $(BASE_FONTS_STAMP)
-	@WEB_HOST_FONTS=userland/fonts $(WEB_LAYOUT_TEST) tools/WebTest/render $(BASE_FONTS_DIRECTORY) \
+	@WEB_HOST_FONTS=userland/data/fonts $(WEB_LAYOUT_TEST) tools/WebTest/render $(BASE_FONTS_DIRECTORY) \
 		> build/tools/web-layout-test.out || \
 		{ grep -B3 -A3 FAIL build/tools/web-layout-test.out | head -80; echo "WEB LAYOUT TEST FAILED (build/tools/web-layout-test.out)"; exit 1; }
 	@grep '^perf' build/tools/web-layout-test.out || true
@@ -1953,15 +1953,15 @@ web-layout-update: $(WEB_LAYOUT_TEST) $(BASE_FONTS_STAMP)
 	$(WEB_LAYOUT_TEST) tools/WebTest/render $(BASE_FONTS_DIRECTORY) --update | tail -n 1
 
 # webrender on the host: renders an HTML file to a PNG or prints its
-# layout tree (build/tools/webrender -f userland/fonts [-l] PAGE.html [OUT.png]).
+# layout tree (build/tools/webrender -f userland/data/fonts [-l] PAGE.html [OUT.png]).
 WEB_RENDER := build/tools/webrender
 WEB_RENDER_UNITS := build/tools/webrender-units
 
-$(WEB_RENDER): userland/bin/webrender.pas $(wildcard userland/webrender/*.pas) $(WEB_RENDER_LIBRARY_SOURCES) \
+$(WEB_RENDER): $(wildcard userland/commands/webrender/*.pas) $(WEB_RENDER_LIBRARY_SOURCES) \
 		$(WEB_LAYOUT_TEST_UNITS)/.generated
 	@mkdir -p $(WEB_RENDER_UNITS)
-	fpc -Mobjfpc -O2 -vew -Fuuserland/webrender $(WEB_RENDER_UNIT_PATHS) -Fi$(WEB_LAYOUT_TEST_UNITS) \
-		-FU$(WEB_RENDER_UNITS) -o$@ userland/bin/webrender.pas
+	fpc -Mobjfpc -O2 -vew -Fuuserland/commands/webrender $(WEB_RENDER_UNIT_PATHS) -Fi$(WEB_LAYOUT_TEST_UNITS) \
+		-FU$(WEB_RENDER_UNITS) -o$@ userland/commands/webrender/webrender.pas
 
 webrender: $(WEB_RENDER)
 
@@ -1989,13 +1989,13 @@ ipv6-test: $(IPV6_TEST)
 # and recursion's pieces build for the host too (the HTTP ones from
 # libhttp).
 WGET_TEST := build/tools/WgetTest
-WGET_TEST_SOURCES := $(wildcard tools/WgetTest/*.pas) tools/CryptoTest/TestChecks.pas $(wildcard userland/wget/*.pas) \
+WGET_TEST_SOURCES := $(wildcard tools/WgetTest/*.pas) tools/CryptoTest/TestChecks.pas $(wildcard userland/commands/wget/*.pas) \
 	$(filter-out %/Crypto.Random.pas %/Crypto.Contents.pas,$(wildcard userland/lib/cryptography/*.pas)) \
 	$(wildcard userland/lib/http/*.pas)
 
 $(WGET_TEST): $(WGET_TEST_SOURCES)
 	@mkdir -p build/tools/wget-test-units
-	fpc -Mobjfpc -O2 -vew -Futools/WgetTest -Futools/CryptoTest -Fuuserland/wget -Fuuserland/lib/http \
+	fpc -Mobjfpc -O2 -vew -Futools/WgetTest -Futools/CryptoTest -Fuuserland/commands/wget -Fuuserland/lib/http \
 		-Fuuserland/lib/cryptography -Fushared -Fishared -FUbuild/tools/wget-test-units -o$@ tools/WgetTest/WgetTest.pas
 
 wget-test: $(WGET_TEST)
@@ -2125,12 +2125,12 @@ NETWORK_PROTOCOL_TEST := build/tools/NetworkProtocolTest
 NETWORK_PROTOCOL_TEST_SOURCES := $(wildcard tools/NetworkProtocolTest/*.pas) tools/CryptoTest/TestChecks.pas \
 	userland/lib/system/Sys.DnsMessages.pas userland/lib/system/Sys.DnsNames.pas \
 	userland/lib/system/Sys.DnsCache.pas userland/lib/system/Sys.InternetAddresses.pas \
-	$(wildcard userland/network/NetworkService.Dhcp*Messages.pas) userland/network/NetworkService.DhcpOffers.pas
+	$(wildcard userland/system/network/NetworkService.Dhcp*Messages.pas) userland/system/network/NetworkService.DhcpOffers.pas
 
 $(NETWORK_PROTOCOL_TEST): $(NETWORK_PROTOCOL_TEST_SOURCES)
 	@mkdir -p build/tools/network-protocol-test-units
 	fpc -Mobjfpc -O2 -Cr -vew -Futools/NetworkProtocolTest -Futools/CryptoTest -Fuuserland/lib/system \
-		-Fuuserland/network -Fushared -Fishared -FUbuild/tools/network-protocol-test-units -o$@ \
+		-Fuuserland/system/network -Fushared -Fishared -FUbuild/tools/network-protocol-test-units -o$@ \
 		tools/NetworkProtocolTest/NetworkProtocolTest.pas
 
 network-protocol-test: $(NETWORK_PROTOCOL_TEST)
@@ -2140,15 +2140,15 @@ network-protocol-test: $(NETWORK_PROTOCOL_TEST)
 # netstat's ports list and ss's filters build for the host too.
 NETSTAT_TEST := build/tools/NetstatTest
 NETSTAT_TEST_SOURCES := tools/NetstatTest/NetstatTest.pas tools/CryptoTest/TestChecks.pas \
-	userland/netstat/Netstat.Services.pas userland/ss/Ss.Filters.pas userland/lib/system/Sys.InternetAddresses.pas
+	userland/commands/netstat/Netstat.Services.pas userland/commands/ss/Ss.Filters.pas userland/lib/system/Sys.InternetAddresses.pas
 
 $(NETSTAT_TEST): $(NETSTAT_TEST_SOURCES)
 	@mkdir -p build/tools/netstat-test-units
-	fpc -Mobjfpc -O2 -Cr -vew -Futools/NetstatTest -Futools/CryptoTest -Fuuserland/netstat -Fuuserland/ss \
+	fpc -Mobjfpc -O2 -Cr -vew -Futools/NetstatTest -Futools/CryptoTest -Fuuserland/commands/netstat -Fuuserland/commands/ss \
 		-Fuuserland/lib/system -Fushared -Fishared -FUbuild/tools/netstat-test-units -o$@ tools/NetstatTest/NetstatTest.pas
 
 netstat-test: $(NETSTAT_TEST)
-	@$(NETSTAT_TEST) userland/etc/ports > build/tools/netstat-test.out || \
+	@$(NETSTAT_TEST) userland/data/etc/ports > build/tools/netstat-test.out || \
 		{ grep FAIL build/tools/netstat-test.out; echo "NETSTAT TEST FAILED (build/tools/netstat-test.out)"; exit 1; }
 	@echo "NETSTAT TEST PASSED: $$(tail -n 1 build/tools/netstat-test.out | cut -d ' ' -f 2-)"
 
@@ -2218,7 +2218,7 @@ imaging-controls-test: $(IMAGING_CONTROLS_TEST)
 	@tail -n 1 build/tools/imaging-controls-test.out
 
 # The icon theme and the pointer's pictures as the build draws them
-# (userland/icons): every file at every size, decoding with alpha, and
+# (userland/data/icons): every file at every size, decoding with alpha, and
 # libcontrols' lookup of the size for a logical size and scale
 # (Controls.IconFiles), on the host with libimage.
 ICON_TEST := build/tools/IconTest

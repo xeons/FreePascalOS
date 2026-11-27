@@ -25,7 +25,7 @@
   bitmaps decoded through libimage, WOFF2 unwrapped to the font it was
   made from, broken CFF data never doing more than refusing a glyph,
   Liberation Sans having Arial's advances, and the system's font
-  configuration (userland/etc/fonts.conf).
+  configuration (userland/data/etc/fonts.conf).
 }
 unit FontTest.OpenType;
 
@@ -284,7 +284,7 @@ begin
   try
     Families := Configuration.FamiliesFor('Arial');
     Check('configuration: built in, Arial is DejaVu Sans', (Length(Families) = 1) and (Families[0] = 'DejaVu Sans'));
-    Check('configuration: userland/etc/fonts.conf reads', Configuration.LoadFromFile('userland/etc/fonts.conf'));
+    Check('configuration: userland/data/etc/fonts.conf reads', Configuration.LoadFromFile('userland/data/etc/fonts.conf'));
     Families := Configuration.FamiliesFor('ARIAL');
     Check('configuration: Arial is Liberation Sans first', (Length(Families) >= 1) and (Families[0] = 'Liberation Sans'));
     Families := Configuration.FamiliesFor('times new roman');

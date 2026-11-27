@@ -64,7 +64,7 @@
                    ADDRESS without a lookup (a local test server)
     --trust-ca FILE  also trust the PEM certificate authorities in FILE
                    (a local test server's CA)
-    -f FONTDIR     font directory (userland/fonts)
+    -f FONTDIR     font directory (userland/data/fonts)
     --user-fonts DIR  families beside the system's (one subdirectory each)
     --hover N      once quiet, move the pointer down the viewport in N steps
                    (:hover on the chain under it) and time each move

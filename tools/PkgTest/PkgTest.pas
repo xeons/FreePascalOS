@@ -17,7 +17,7 @@
 }
 
 {
-  Checks pkg (userland/pkg) on the host: everything but running scripts
+  Checks pkg (userland/commands/pkg) on the host: everything but running scripts
   with /bin/sh and fetching over HTTP, against packages, an index and a
   database the ports tool made (make-fixtures.py).
 

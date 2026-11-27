@@ -24,7 +24,7 @@
                                    (installed only as a dependency)
 
 The host writes it when it installs packages into the system disk
-(install-to-image); pkg (userland/pkg) reads and writes the same files.
+(install-to-image); pkg (userland/commands/pkg) reads and writes the same files.
 """
 
 import os
