@@ -25,6 +25,7 @@
 #include <chrono>
 #include <iostream>
 #include <map>
+#include <new>
 #include <memory>
 #include <mutex>
 #include <sstream>
@@ -86,6 +87,16 @@ void test_exceptions() {
 		(void)small.at(5);
 		check(false, "at() did not throw");
 	} catch (const std::out_of_range &) {
+	}
+	// More than the machine has: the kernel refuses it, malloc returns
+	// null and operator new throws (the C library does not panic).
+	try {
+		volatile std::size_t too_much = std::size_t(1) << 40;
+		char *block = new char[too_much];
+		block[0] = 1;
+		check(false, "new of 1 TiB did not throw");
+		delete[] block;
+	} catch (const std::bad_alloc &) {
 	}
 }
 

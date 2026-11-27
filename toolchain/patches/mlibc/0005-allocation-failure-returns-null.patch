@@ -1,0 +1,80 @@
+Allocation failure returns null instead of panicking.
+
+mlibc's VirtualAllocator::map() asserts that the anonymous mapping
+succeeds, so a refused mmap (the kernel's commit limit, ENOMEM) ends the
+process with "mlibc: panic" from inside malloc. frg::slab_pool already
+handles a map() that returns 0 by returning null, so map() reports the
+refusal that way (ld.so, which cannot go on without memory, still
+stops). malloc and realloc set errno to ENOMEM when they return null, as
+POSIX requires (upstream sets it only in calloc and posix_memalign), and
+malloc, realloc and posix_memalign refuse sizes above PTRDIFF_MAX before
+the slab pool's rounding to pages can wrap. C++ operator new throws
+std::bad_alloc when malloc returns null. Upstream (master, November
+2026) still asserts in map().
+
+--- a/options/internal/generic/allocator.cpp	2026-08-02 15:17:51.000000000 -0500
++++ b/options/internal/generic/allocator.cpp	2026-11-26 21:17:57.352653599 -0600
+@@ -32,9 +32,17 @@
+ // VirtualAllocator
+ // --------------------------------------------------------
+ 
++// A refused mapping is reported as 0: frg::slab_pool then returns null,
++// and malloc and friends fail with ENOMEM. The dynamic linker cannot go
++// on without its memory, so it still stops there.
+ uintptr_t VirtualAllocator::map(size_t length) {
+ 	void *ptr;
++#ifdef MLIBC_BUILDING_RTLD
+ 	__ensure(!mlibc::sysdep<AnonAllocate>(length, &ptr));
++#else
++	if (mlibc::sysdep<AnonAllocate>(length, &ptr))
++		return 0;
++#endif
+ 	return (uintptr_t)ptr;
+ }
+ 
+--- a/options/ansi/generic/stdlib.cpp	2026-08-02 15:17:51.000000000 -0500
++++ b/options/ansi/generic/stdlib.cpp	2026-11-26 21:17:57.352709261 -0600
+@@ -564,8 +564,20 @@
+ 	getAllocator().free(ptr);
+ }
+ 
++// No object may be larger than PTRDIFF_MAX, and the allocator's
++// rounding to pages would wrap for sizes near SIZE_MAX.
++static bool allocation_too_large(size_t size) {
++	return size > PTRDIFF_MAX;
++}
++
+ void *malloc(size_t size) {
++	if (allocation_too_large(size)) {
++		errno = ENOMEM;
++		return nullptr;
++	}
+ 	auto nptr = getAllocator().allocate(size);
++	if (!nptr)
++		errno = ENOMEM;
+ 	// TODO: Print PID only if POSIX option is enabled.
+ 	if (mlibc::globalConfig().debugMalloc)
+ 		mlibc::infoLogger() << "mlibc (PID ?): malloc() returns "
+@@ -574,7 +586,13 @@
+ }
+ 
+ void *realloc(void *ptr, size_t size) {
++	if (allocation_too_large(size)) {
++		errno = ENOMEM;
++		return nullptr;
++	}
+ 	auto nptr = getAllocator().reallocate(ptr, size);
++	if (!nptr && size)
++		errno = ENOMEM;
+ 	// TODO: Print PID only if POSIX option is enabled.
+ 	if (mlibc::globalConfig().debugMalloc)
+ 		mlibc::infoLogger() << "mlibc (PID ?): realloc() on "
+@@ -587,6 +605,8 @@
+ 		return EINVAL;
+ 	if(align & (align - 1)) // Make sure that align is a power of two.
+ 		return EINVAL;
++	if(allocation_too_large(size))
++		return ENOMEM;
+ 	auto p = getAllocator().allocate(frg::max(align, size));
+ 	if(!p)
+ 		return ENOMEM;
