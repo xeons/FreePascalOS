@@ -19,18 +19,21 @@
 {
   The lexer: ECMAScript source text to tokens.
 
-  The source is decoded from UTF-8 to UTF-16 once; tokens carry their
-  text as UTF-16 (identifier names, string values, template pieces both
-  cooked and raw), numbers as doubles, BigInt literals as their digits.
+  The source is decoded from UTF-8 to UTF-16 once. A token is a small
+  record without strings (the parser copies tokens freely): its kind,
+  where it starts and ends (offsets, line, column), numbers as doubles.
+  Identifier names and reserved words are interned in the lexer's name
+  table, and a token carries the name's index; the entry also says
+  whether the name is a reserved word or a contextual word (let, of,
+  async, await, yield, get, set, static...), so neither needs comparing
+  text. The value of a string, template piece, regular expression or
+  BigInt is taken from the source when the parser asks for it (most are
+  never asked for: a lazily compiled function's body is only checked).
+
   Whether a / starts a regular expression or is division depends on
   the grammar, so the parser asks for a regular expression explicitly
   (ScanRegExp) where an expression may begin. Each token says whether
-  a line terminator came before it, for automatic semicolon insertion,
-  and where it starts (line, column) for messages and stack traces.
-
-  Reserved words are tokens of their own; contextual words (let, of,
-  async, await, yield, get, set, static) are identifiers that the
-  parser looks at by value.
+  a line terminator came before it, for automatic semicolon insertion.
 }
 unit Js.Lexer;
 
@@ -65,18 +68,17 @@ type
     tkNull, tkReturn, tkSuper, tkSwitch, tkThis, tkThrow, tkTrue, tkTry,
     tkTypeof, tkVar, tkVoid, tkWhile, tkWith);
 
+  { Identifiers the grammar looks at: contextual words, the words
+    reserved in strict mode only, and the names strict mode forbids as
+    bindings. }
+  TJsWord = (jwNone, jwAs, jwAssert, jwAsync, jwAwait, jwFrom, jwGet, jwLet, jwMeta, jwOf, jwSet, jwStatic,
+    jwTarget, jwYield, jwEval, jwArguments, jwImplements, jwInterface, jwPackage, jwPrivate, jwProtected,
+    jwPublic);
+
   TJsToken = record
     Kind: TJsTokenKind;
-    { Identifier name, string value, cooked template text, regexp body,
-      number or BigInt digits as written. }
-    Text: UnicodeString;
-    { A template piece's raw text; a regexp's flags. }
-    Raw: UnicodeString;
-    Number: Double;
-    Start: Integer;
-    Finish: Integer;
-    Line: Integer;
-    Column: Integer;
+    { An identifier's contextual word (jwNone for most). }
+    Word: TJsWord;
     NewlineBefore: Boolean;
     { A template piece: whether it ends the template (else a substitution follows). }
     TemplateTail: Boolean;
@@ -86,6 +88,31 @@ type
     LegacyOctal: Boolean;
     { An identifier written with an escape. }
     Escaped: Boolean;
+    { A string or template piece whose value is not its source text
+      (escapes, line ends to normalize). }
+    HasEscape: Boolean;
+    { An identifier, private name (without the #) or reserved word: its
+      interned name (TJsLexer.Names). }
+    Name: Integer;
+    { A number's value; a BigInt's radix. }
+    Number: Double;
+    Start: Integer;
+    Finish: Integer;
+    Line: Integer;
+    Column: Integer;
+    { A regular expression: where its flags start (its body ends just
+      before, at the closing slash). }
+    FlagsStart: Integer;
+  end;
+
+  TJsNameList = array of UnicodeString;
+
+  { A slot of the lexer's name table: the name's hash beside its index,
+    so that a probe reads one place. }
+  TJsNameSlot = record
+    Hash: LongWord;
+    { The name's index + 1; 0: empty. }
+    Entry: Integer;
   end;
 
   EJsSyntaxError = class(Exception)
@@ -103,20 +130,34 @@ type
     FLine: Integer;
     FLineStart: Integer;
     FNewline: Boolean;
-    { The identifier names met so far, each kept once (open addressing):
-      a name written a thousand times is one string. }
-    FNames: array of UnicodeString;
+    { The names met so far, each kept once: a name written a thousand
+      times is one string and one index. Dense arrays by index, and an
+      open addressing table by hash. }
+    FNames: TJsNameList;
+    FNameKinds: array of TJsTokenKind;
+    FNameWords: array of TJsWord;
+    FNameHashes: array of LongWord;
     FNameCount: Integer;
-    procedure TakeName(var Text: UnicodeString; Start, Count: Integer);
+    FNameSlots: array of TJsNameSlot;
+    procedure GrowNameSlots;
+    procedure InsertNameSlot(Entry: Integer);
+    function NewNameEntry(Hash: LongWord): Integer;
+    function AddName(Start, Count: Integer; Hash: LongWord): Integer;
+    function FindName(Start, Count: Integer; Hash: LongWord): Integer;
+    function InternText(const Text: UnicodeString): Integer;
+    procedure InternWords;
+    procedure CopyNames(From: TJsLexer);
     procedure Fail(const Text: string);
     function Peek(Offset: Integer = 0): WideChar; inline;
+    procedure SkipComment;
     procedure SkipSpace;
     procedure ScanIdentifier(var Token: TJsToken);
     procedure ScanUnusualIdentifier(var Token: TJsToken);
     function ScanSimpleInteger(var Token: TJsToken): Boolean;
     procedure ScanNumber(var Token: TJsToken);
     procedure ScanString(var Token: TJsToken; Quote: WideChar);
-    function ScanEscape(var Token: TJsToken; InTemplate: Boolean): UnicodeString;
+    function ScanEscape(var Token: TJsToken; InTemplate: Boolean): LongInt;
+    procedure ScanTemplatePiece(var Token: TJsToken);
     procedure ScanPunctuator(var Token: TJsToken);
   public
     constructor Create(const Source: UnicodeString);
@@ -130,7 +171,22 @@ type
     procedure SavePosition(out Position, Line, LineStart: Integer);
     procedure RestorePosition(Position, Line, LineStart: Integer);
     function SourceText(Start, Finish: Integer): UnicodeString;
+    { The value of a string token. }
+    procedure DecodeString(const Token: TJsToken; var Text: UnicodeString);
+    { A template piece's cooked and raw text. }
+    procedure DecodeTemplate(const Token: TJsToken; var Cooked, Raw: UnicodeString);
+    { A regular expression token's body and flags. }
+    procedure DecodeRegExp(const Token: TJsToken; var Body, Flags: UnicodeString);
+    { A BigInt token's digits (no prefix, no separators). }
+    procedure DecodeBigInt(const Token: TJsToken; var Digits: UnicodeString);
+    { A string token that is the directive "use strict" (written so). }
+    function IsUseStrict(const Token: TJsToken): Boolean;
+    { The name is a reserved word (spelled with an escape it is still
+      reserved, 12.7.2). }
+    function IsReservedName(Name: Integer): Boolean; inline;
     property Source: UnicodeString read FSource;
+    { Interned names, by a token's Name. }
+    property Names: TJsNameList read FNames;
   end;
 
 function IsIdentifierStart(Character: LongWord): Boolean;
@@ -138,7 +194,6 @@ function IsIdentifierPart(Character: LongWord): Boolean;
 function IsLineTerminator(Character: WideChar): Boolean; inline;
 function IsJsWhiteSpace(Character: WideChar): Boolean;
 function TokenKindName(Kind: TJsTokenKind): string;
-function KeywordToken(const Name: UnicodeString; out Kind: TJsTokenKind): Boolean;
 { FNV-1a over UTF-16 units (the name tables of the lexer, scopes and
   scope chains); never overflows a range check. }
 function NameHash(Text: PWideChar; Count: Integer): LongWord;
@@ -149,12 +204,16 @@ uses
   Character;
 
 const
-  KeywordTexts: array[tkBreak..tkWith] of string = (
+  KeywordTexts: array[tkBreak..tkWith] of UnicodeString = (
     'break', 'case', 'catch', 'class', 'const', 'continue', 'debugger',
     'default', 'delete', 'do', 'else', 'enum', 'export', 'extends', 'false',
     'finally', 'for', 'function', 'if', 'import', 'in', 'instanceof', 'new',
     'null', 'return', 'super', 'switch', 'this', 'throw', 'true', 'try',
     'typeof', 'var', 'void', 'while', 'with');
+
+  WordTexts: array[jwAs..jwPublic] of UnicodeString = (
+    'as', 'assert', 'async', 'await', 'from', 'get', 'let', 'meta', 'of', 'set', 'static', 'target', 'yield',
+    'eval', 'arguments', 'implements', 'interface', 'package', 'private', 'protected', 'public');
 
   PunctuatorTexts: array[tkLeftBrace..tkAt] of string = (
     '{', '}', '(', ')', '[', ']', '.', '...', ';', ',', '<', '>', '<=', '>=',
@@ -163,17 +222,36 @@ const
     '=', '+=', '-=', '*=', '/=', '%=', '**=', '<<=', '>>=', '>>>=', '&=',
     '|=', '^=', '&&=', '||=', '??=', '=>', '#', '@');
 
+  HashOffset = LongWord(2166136261);
+  HashPrime = LongWord(16777619);
+
+var
+  { A lexer of no source, made at start-up: its name table holds the
+    words, and new lexers start from a copy. }
+  WordsLexer: TJsLexer = nil;
+
+type
+  { What an ASCII character means between tokens. }
+  TJsSpaceClass = (
+    scToken,       { starts a token }
+    scBlank,       { white space }
+    scNewline,     { a line terminator }
+    scMaybeComment { / < - : a comment, or a token }
+  );
+
+var
+  { Classes of the ASCII characters, filled in at start-up. }
+  SpaceClasses: array[0..127] of TJsSpaceClass;
+  IdentifierParts: array[0..127] of Boolean;
+
 {$push}{$R-}{$Q-}
 function NameHash(Text: PWideChar; Count: Integer): LongWord;
-const
-  Offset = LongWord(2166136261);
-  Prime = LongWord(16777619);
 var
   Index: Integer;
 begin
-  Result := Offset;
+  Result := HashOffset;
   for Index := 0 to Count - 1 do
-    Result := (Result xor LongWord(Ord(Text[Index]))) * Prime;
+    Result := (Result xor LongWord(Ord(Text[Index]))) * HashPrime;
 end;
 {$pop}
 
@@ -196,41 +274,8 @@ begin
     tkRegExp: Result := 'regular expression';
     tkLeftBrace..tkAt: Result := '''' + PunctuatorTexts[Kind] + '''';
   else
-    Result := '''' + KeywordTexts[Kind] + '''';
+    Result := '''' + string(KeywordTexts[Kind]) + '''';
   end;
-end;
-
-{ Compares without making strings (this runs for every identifier). }
-function SameKeyword(const Name: UnicodeString; const Keyword: string): Boolean; inline;
-var
-  Index: Integer;
-begin
-  if Length(Name) <> Length(Keyword) then
-    Exit(False);
-  { Compared as numbers: a Char to WideChar cast is a conversion through
-    the widestring manager at run time. }
-  for Index := 2 to Length(Name) do
-    if Ord(Name[Index]) <> Ord(Keyword[Index]) then
-      Exit(False);
-  Result := True;
-end;
-
-function KeywordToken(const Name: UnicodeString; out Kind: TJsTokenKind): Boolean;
-var
-  Candidate: TJsTokenKind;
-  First: WideChar;
-begin
-  Result := False;
-  Kind := tkIdentifier;
-  if (Length(Name) < 2) or (Length(Name) > 10) or (Name[1] < 'a') or (Name[1] > 'w') then
-    Exit;
-  First := Name[1];
-  for Candidate := tkBreak to tkWith do
-    if (Ord(KeywordTexts[Candidate][1]) = Ord(First)) and SameKeyword(Name, KeywordTexts[Candidate]) then
-    begin
-      Kind := Candidate;
-      Exit(True);
-    end;
 end;
 
 function IsLineTerminator(Character: WideChar): Boolean; inline;
@@ -274,8 +319,7 @@ end;
 function IsIdentifierStart(Character: LongWord): Boolean;
 begin
   if Character < 128 then
-    Exit(((Character >= Ord('a')) and (Character <= Ord('z'))) or ((Character >= Ord('A')) and
-      (Character <= Ord('Z'))) or (Character = Ord('$')) or (Character = Ord('_')));
+    Exit(IdentifierParts[Character] and not ((Character >= Ord('0')) and (Character <= Ord('9'))));
   if Character > $FFFF then
     Exit(True);
   if IsOtherIdentifierStart(Character) then
@@ -287,13 +331,52 @@ end;
 function IsIdentifierPart(Character: LongWord): Boolean;
 begin
   if Character < 128 then
-    Exit(IsIdentifierStart(Character) or ((Character >= Ord('0')) and (Character <= Ord('9'))));
+    Exit(IdentifierParts[Character]);
   if (Character > $FFFF) or IsOtherIdentifierPart(Character) then
     Exit(True);
   Result := IsIdentifierStart(Character) or
     (TCharacter.GetUnicodeCategory(WideChar(Character)) in [TUnicodeCategory.ucNonSpacingMark,
     TUnicodeCategory.ucCombiningMark, TUnicodeCategory.ucDecimalNumber,
     TUnicodeCategory.ucConnectPunctuation]);
+end;
+
+procedure FillCharacterClasses;
+var
+  Code: Integer;
+begin
+  for Code := 0 to 127 do
+  begin
+    case Chr(Code) of
+      ' ', #9, #11, #12: SpaceClasses[Code] := scBlank;
+      #10, #13: SpaceClasses[Code] := scNewline;
+      '/', '<', '-': SpaceClasses[Code] := scMaybeComment;
+    else
+      SpaceClasses[Code] := scToken;
+    end;
+    IdentifierParts[Code] := Chr(Code) in ['a'..'z', 'A'..'Z', '0'..'9', '$', '_'];
+  end;
+end;
+
+function CodePointText(CodePoint: LongWord): UnicodeString;
+begin
+  if CodePoint >= $10000 then
+  begin
+    Dec(CodePoint, $10000);
+    Result := WideChar($D800 + (CodePoint shr 10)) + WideChar($DC00 + (CodePoint and $3FF));
+  end
+  else
+    Result := WideChar(CodePoint);
+end;
+
+function HexValue(Character: WideChar): Integer;
+begin
+  case Character of
+    '0'..'9': Result := Ord(Character) - Ord('0');
+    'a'..'f': Result := Ord(Character) - Ord('a') + 10;
+    'A'..'F': Result := Ord(Character) - Ord('A') + 10;
+  else
+    Result := -1;
+  end;
 end;
 
 { TJsLexer }
@@ -306,6 +389,10 @@ begin
   FPosition := 1;
   FLine := 1;
   FLineStart := 1;
+  if WordsLexer <> nil then
+    CopyNames(WordsLexer)
+  else
+    InternWords;
   { A #! line at the very start is a comment. }
   if (FLength >= 2) and (FSource[1] = '#') and (FSource[2] = '!') then
     while (FPosition <= FLength) and not IsLineTerminator(FSource[FPosition]) do
@@ -349,124 +436,260 @@ begin
   FPosition := Token.Finish;
 end;
 
+{ The name table }
+
+{ Rebuilt with four slots per name or more (kept at least half empty;
+  a power of two: the hash is masked). }
+procedure TJsLexer.GrowNameSlots;
+var
+  Index, Size: Integer;
+begin
+  Size := 1024;
+  while Size < FNameCount * 4 do
+    Size := Size * 2;
+  FNameSlots := nil;
+  SetLength(FNameSlots, Size);
+  for Index := 0 to FNameCount - 1 do
+    InsertNameSlot(Index);
+end;
+
+procedure TJsLexer.InsertNameSlot(Entry: Integer);
+var
+  Mask, Slot: LongWord;
+begin
+  Mask := LongWord(Length(FNameSlots) - 1);
+  Slot := FNameHashes[Entry] and Mask;
+  while FNameSlots[Slot].Entry <> 0 do
+    Slot := (Slot + 1) and Mask;
+  FNameSlots[Slot].Hash := FNameHashes[Entry];
+  FNameSlots[Slot].Entry := Entry + 1;
+end;
+
+{ The index of the name written at Start (Count units, hashed to Hash);
+  -1 when it is new. }
+function TJsLexer.FindName(Start, Count: Integer; Hash: LongWord): Integer;
+var
+  Mask, Slot: LongWord;
+  Entry, Index: Integer;
+  Text, Name: PWideChar;
+begin
+  Text := @FSource[Start];
+  Mask := LongWord(Length(FNameSlots) - 1);
+  Slot := Hash and Mask;
+  while True do
+  begin
+    Entry := FNameSlots[Slot].Entry;
+    if Entry = 0 then
+      Exit(-1);
+    if FNameSlots[Slot].Hash = Hash then
+    begin
+      Dec(Entry);
+      if Length(FNames[Entry]) = Count then
+      begin
+        { Names are short: a loop rather than a call. }
+        Name := PWideChar(FNames[Entry]);
+        Index := 0;
+        while (Index < Count) and (Name[Index] = Text[Index]) do
+          Inc(Index);
+        if Index = Count then
+          Exit(Entry);
+      end;
+    end;
+    Slot := (Slot + 1) and Mask;
+  end;
+end;
+
+{ A new entry (an identifier, no text yet), not in the slots yet. }
+function TJsLexer.NewNameEntry(Hash: LongWord): Integer;
+begin
+  if FNameCount >= Length(FNames) then
+  begin
+    SetLength(FNames, Length(FNames) * 2 + 256);
+    SetLength(FNameKinds, Length(FNames));
+    SetLength(FNameWords, Length(FNames));
+    SetLength(FNameHashes, Length(FNames));
+  end;
+  Result := FNameCount;
+  FNameKinds[Result] := tkIdentifier;
+  FNameWords[Result] := jwNone;
+  FNameHashes[Result] := Hash;
+  Inc(FNameCount);
+end;
+
+{ A new name, the source's units from Start. }
+function TJsLexer.AddName(Start, Count: Integer; Hash: LongWord): Integer;
+begin
+  Result := NewNameEntry(Hash);
+  SetString(FNames[Result], PWideChar(@FSource[Start]), Count);
+  if FNameCount * 2 > Length(FNameSlots) then
+    GrowNameSlots
+  else
+    InsertNameSlot(Result);
+end;
+
+{ A name that is not a slice of the source as written (escapes): the
+  text itself is entered. }
+function TJsLexer.InternText(const Text: UnicodeString): Integer;
+var
+  Hash, Mask, Slot: LongWord;
+  Entry: Integer;
+begin
+  Hash := NameHash(PWideChar(Text), Length(Text));
+  Mask := LongWord(Length(FNameSlots) - 1);
+  Slot := Hash and Mask;
+  while FNameSlots[Slot].Entry <> 0 do
+  begin
+    Entry := FNameSlots[Slot].Entry - 1;
+    if (FNameSlots[Slot].Hash = Hash) and (FNames[Entry] = Text) then
+      Exit(Entry);
+    Slot := (Slot + 1) and Mask;
+  end;
+  Result := NewNameEntry(Hash);
+  FNames[Result] := Text;
+  if FNameCount * 2 > Length(FNameSlots) then
+    GrowNameSlots
+  else
+    InsertNameSlot(Result);
+end;
+
+{ The reserved and contextual words come first: a name scanned later
+  finds what it is on its entry. }
+procedure TJsLexer.InternWords;
+var
+  Keyword: TJsTokenKind;
+  Word: TJsWord;
+  Name: Integer;
+begin
+  GrowNameSlots;
+  { Entered first, then marked: entering may move the arrays. }
+  for Keyword := Low(KeywordTexts) to High(KeywordTexts) do
+  begin
+    Name := InternText(KeywordTexts[Keyword]);
+    FNameKinds[Name] := Keyword;
+  end;
+  for Word := Low(WordTexts) to High(WordTexts) do
+  begin
+    Name := InternText(WordTexts[Word]);
+    FNameWords[Name] := Word;
+  end;
+end;
+
+{ The table of a lexer that only knows the words (cheaper than entering
+  them again: a lazily compiled function makes a lexer of its own). }
+procedure TJsLexer.CopyNames(From: TJsLexer);
+begin
+  FNames := Copy(From.FNames);
+  FNameKinds := Copy(From.FNameKinds);
+  FNameWords := Copy(From.FNameWords);
+  FNameHashes := Copy(From.FNameHashes);
+  FNameSlots := Copy(From.FNameSlots);
+  FNameCount := From.FNameCount;
+end;
+
+function TJsLexer.IsReservedName(Name: Integer): Boolean;
+begin
+  Result := FNameKinds[Name] <> tkIdentifier;
+end;
+
+{ Space and comments }
+
+{ A comment at FPosition (/, < or - starts it), skipped; nothing moves
+  when the character starts a token instead. }
+procedure TJsLexer.SkipComment;
+var
+  Character: WideChar;
+begin
+  Character := FSource[FPosition];
+  if (Character = '/') and (Peek(1) = '/') then
+  begin
+    while (FPosition <= FLength) and not IsLineTerminator(FSource[FPosition]) do
+      Inc(FPosition);
+  end
+  else if (Character = '/') and (Peek(1) = '*') then
+  begin
+    Inc(FPosition, 2);
+    while True do
+    begin
+      if FPosition > FLength then
+        Fail('Unterminated comment');
+      Character := FSource[FPosition];
+      if (Character = '*') and (Peek(1) = '/') then
+      begin
+        Inc(FPosition, 2);
+        Break;
+      end;
+      if IsLineTerminator(Character) then
+      begin
+        if (Character = #13) and (Peek(1) = #10) then
+          Inc(FPosition);
+        Inc(FLine);
+        FLineStart := FPosition + 1;
+        FNewline := True;
+      end;
+      Inc(FPosition);
+    end;
+  end
+  else if ((Character = '<') and (Peek(1) = '!') and (Peek(2) = '-') and (Peek(3) = '-')) or
+    ((Character = '-') and (Peek(1) = '-') and (Peek(2) = '>') and (FNewline or (FPosition = 1))) then
+  begin
+    { An HTML-like comment (Annex B). }
+    while (FPosition <= FLength) and not IsLineTerminator(FSource[FPosition]) do
+      Inc(FPosition);
+  end;
+end;
+
 procedure TJsLexer.SkipSpace;
 var
   Character: WideChar;
+  Before: Integer;
 begin
   while FPosition <= FLength do
   begin
     Character := FSource[FPosition];
-    if Character = ' ' then
+    if Ord(Character) < 128 then
     begin
-      Inc(FPosition);
-      Continue;
-    end;
-    { Every other ASCII character above '/' starts a token, except '<'
-      that may open an HTML-like comment. }
-    if (Character > '/') and (Character < #$80) and (Character <> '<') then
-      Break;
-    if IsLineTerminator(Character) then
+      case SpaceClasses[Ord(Character)] of
+        scToken:
+          Exit;
+        scBlank:
+          Inc(FPosition);
+        scNewline:
+          begin
+            if (Character = #13) and (Peek(1) = #10) then
+              Inc(FPosition);
+            Inc(FPosition);
+            Inc(FLine);
+            FLineStart := FPosition;
+            FNewline := True;
+          end;
+        scMaybeComment:
+          begin
+            Before := FPosition;
+            SkipComment;
+            if FPosition = Before then
+              Exit;
+          end;
+      end;
+    end
+    else if IsLineTerminator(Character) then
     begin
-      if (Character = #13) and (Peek(1) = #10) then
-        Inc(FPosition);
       Inc(FPosition);
       Inc(FLine);
       FLineStart := FPosition;
       FNewline := True;
     end
-    else if (Character = ' ') or (Character = #9) or IsJsWhiteSpace(Character) then
+    else if IsJsWhiteSpace(Character) then
       Inc(FPosition)
-    else if (Character = '/') and (Peek(1) = '/') then
-    begin
-      while (FPosition <= FLength) and not IsLineTerminator(FSource[FPosition]) do
-        Inc(FPosition);
-    end
-    else if (Character = '/') and (Peek(1) = '*') then
-    begin
-      Inc(FPosition, 2);
-      while True do
-      begin
-        if FPosition > FLength then
-          Fail('Unterminated comment');
-        Character := FSource[FPosition];
-        if (Character = '*') and (Peek(1) = '/') then
-        begin
-          Inc(FPosition, 2);
-          Break;
-        end;
-        if IsLineTerminator(Character) then
-        begin
-          if (Character = #13) and (Peek(1) = #10) then
-            Inc(FPosition);
-          Inc(FLine);
-          FLineStart := FPosition + 1;
-          FNewline := True;
-        end;
-        Inc(FPosition);
-      end;
-    end
-    else if (Character = '<') and (Peek(1) = '!') and (Peek(2) = '-') and (Peek(3) = '-') then
-    begin
-      { An HTML-like comment (Annex B). }
-      while (FPosition <= FLength) and not IsLineTerminator(FSource[FPosition]) do
-        Inc(FPosition);
-    end
-    else if (Character = '-') and (Peek(1) = '-') and (Peek(2) = '>') and (FNewline or (FPosition = 1)) then
-    begin
-      while (FPosition <= FLength) and not IsLineTerminator(FSource[FPosition]) do
-        Inc(FPosition);
-    end
     else
-      Break;
+      Exit;
   end;
 end;
 
-function HexValue(Character: WideChar): Integer;
-begin
-  case Character of
-    '0'..'9': Result := Ord(Character) - Ord('0');
-    'a'..'f': Result := Ord(Character) - Ord('a') + 10;
-    'A'..'F': Result := Ord(Character) - Ord('A') + 10;
-  else
-    Result := -1;
-  end;
-end;
+{ Escapes }
 
-{ CR LF and CR as LF (template raw text). }
-function NormalizeLineEnds(const Text: UnicodeString): UnicodeString;
-var
-  Index: Integer;
-begin
-  Result := '';
-  Index := 1;
-  while Index <= Length(Text) do
-  begin
-    if Text[Index] = #13 then
-    begin
-      Result := Result + #10;
-      if (Index < Length(Text)) and (Text[Index + 1] = #10) then
-        Inc(Index);
-    end
-    else
-      Result := Result + Text[Index];
-    Inc(Index);
-  end;
-end;
-
-function CodePointText(CodePoint: LongWord): UnicodeString;
-begin
-  if CodePoint >= $10000 then
-  begin
-    Dec(CodePoint, $10000);
-    Result := WideChar($D800 + (CodePoint shr 10)) + WideChar($DC00 + (CodePoint and $3FF));
-  end
-  else
-    Result := WideChar(CodePoint);
-end;
-
-{ After the backslash: the escape's value. In templates a bad escape is
-  noted on the token instead of failing. }
-function TJsLexer.ScanEscape(var Token: TJsToken; InTemplate: Boolean): UnicodeString;
+{ After the backslash: the escape's code point; -1 for none (a line
+  continuation, or a bad escape in a template, noted on the token). }
+function TJsLexer.ScanEscape(var Token: TJsToken; InTemplate: Boolean): LongInt;
 var
   Character: WideChar;
   Value, Digit, Count: LongWord;
@@ -480,26 +703,26 @@ var
   end;
 
 begin
-  Result := '';
+  Result := -1;
   if FPosition > FLength then
     Fail('Unterminated string');
   Character := FSource[FPosition];
   Inc(FPosition);
   case Character of
-    'n': Result := #10;
-    't': Result := #9;
-    'r': Result := #13;
-    'b': Result := #8;
-    'f': Result := #12;
-    'v': Result := #11;
+    'n': Result := 10;
+    't': Result := 9;
+    'r': Result := 13;
+    'b': Result := 8;
+    'f': Result := 12;
+    'v': Result := 11;
     '0'..'7':
       begin
         if (Character = '0') and not ((Peek >= '0') and (Peek <= '9')) then
-          Exit(#0);
+          Exit(0);
         if InTemplate then
         begin
           Token.InvalidEscape := True;
-          Exit('');
+          Exit(-1);
         end;
         Token.LegacyOctal := True;
         Value := Ord(Character) - Ord('0');
@@ -513,7 +736,7 @@ begin
             Inc(FPosition);
           end;
         end;
-        Result := WideChar(Value);
+        Result := Value;
       end;
     '8', '9':
       begin
@@ -521,16 +744,16 @@ begin
           Token.InvalidEscape := True
         else
           Token.LegacyOctal := True;
-        Result := Character;
+        Result := Ord(Character);
       end;
     'x':
       begin
         if (HexValue(Peek) < 0) or (HexValue(Peek(1)) < 0) then
         begin
           Bad('Invalid hexadecimal escape sequence');
-          Exit('');
+          Exit(-1);
         end;
-        Result := WideChar(HexValue(Peek) * 16 + HexValue(Peek(1)));
+        Result := HexValue(Peek) * 16 + HexValue(Peek(1));
         Inc(FPosition, 2);
       end;
     'u':
@@ -551,10 +774,10 @@ begin
           if (Peek <> '}') or (Count = 0) or (Value > $10FFFF) then
           begin
             Bad('Invalid Unicode escape sequence');
-            Exit('');
+            Exit(-1);
           end;
           Inc(FPosition);
-          Result := CodePointText(Value);
+          Result := Value;
         end
         else
         begin
@@ -565,12 +788,12 @@ begin
             if Integer(Digit) < 0 then
             begin
               Bad('Invalid Unicode escape sequence');
-              Exit('');
+              Exit(-1);
             end;
             Value := Value * 16 + Digit;
             Inc(FPosition);
           end;
-          Result := WideChar(Value);
+          Result := Value;
         end;
       end;
     #13:
@@ -579,89 +802,55 @@ begin
           Inc(FPosition);
         Inc(FLine);
         FLineStart := FPosition;
-        Result := '';
       end;
     #10, #$2028, #$2029:
       begin
         Inc(FLine);
         FLineStart := FPosition;
-        Result := '';
       end;
   else
-    Result := Character;
+    Result := Ord(Character);
   end;
 end;
 
-procedure TJsLexer.TakeName(var Text: UnicodeString; Start, Count: Integer);
-var
-  Hash, Mask: Cardinal;
-  Index: Integer;
-  Old: array of UnicodeString;
-begin
-  if FNameCount * 2 >= Length(FNames) then
-  begin
-    Old := FNames;
-    FNames := nil;
-    { A power of two (the hash is masked). }
-    if Length(Old) = 0 then
-      SetLength(FNames, 1024)
-    else
-      SetLength(FNames, Length(Old) * 2);
-    FNameCount := 0;
-    Mask := Cardinal(Length(FNames) - 1);
-    for Index := 0 to High(Old) do
-      if Old[Index] <> '' then
-      begin
-        Hash := NameHash(PWideChar(Old[Index]), Length(Old[Index])) and Mask;
-        while FNames[Hash] <> '' do
-          Hash := (Hash + 1) and Mask;
-        FNames[Hash] := Old[Index];
-        Inc(FNameCount);
-      end;
-  end;
-  Mask := Cardinal(Length(FNames) - 1);
-  Hash := NameHash(@FSource[Start], Count) and Mask;
-  while FNames[Hash] <> '' do
-  begin
-    if (Length(FNames[Hash]) = Count) and (CompareWord(FNames[Hash][1], FSource[Start], Count) = 0) then
-    begin
-      Text := FNames[Hash];
-      Exit;
-    end;
-    Hash := (Hash + 1) and Mask;
-  end;
-  FNames[Hash] := Copy(FSource, Start, Count);
-  Inc(FNameCount);
-  Text := FNames[Hash];
-end;
+{ Identifiers }
 
-{ The common case, ASCII letters, digits, $ and _ only, taken whole
-  (no managed locals: this runs for every identifier and keyword). }
+{ The common case, ASCII letters, digits, $ and _ only, hashed while
+  scanned and looked up in place (no strings made: this runs for every
+  identifier and keyword). }
 procedure TJsLexer.ScanIdentifier(var Token: TJsToken);
 var
-  Character: WideChar;
-  Start: Integer;
+  Start, Position, Count: Integer;
+  Code: LongWord;
+  Hash: LongWord;
+  Text: PWideChar;
 begin
   Start := FPosition;
-  while FPosition <= FLength do
+  Position := Start;
+  Text := PWideChar(FSource) - 1;
+  Hash := HashOffset;
+  {$push}{$R-}{$Q-}
+  while Position <= FLength do
   begin
-    Character := FSource[FPosition];
-    case Character of
-      'a'..'z', 'A'..'Z', '0'..'9', '$', '_':
-        Inc(FPosition);
-    else
+    Code := Ord(Text[Position]);
+    if (Code >= 128) or not IdentifierParts[Code] then
       Break;
-    end;
+    Hash := (Hash xor Code) * HashPrime;
+    Inc(Position);
   end;
-  if (FPosition > FLength) or ((FSource[FPosition] <> '\') and (Ord(FSource[FPosition]) < 128)) then
+  {$pop}
+  if (Position <= FLength) and ((Text[Position] = '\') or (Ord(Text[Position]) >= 128)) then
   begin
-    TakeName(Token.Text, Start, FPosition - Start);
-    Token.Kind := tkIdentifier;
-    KeywordToken(Token.Text, Token.Kind);
+    ScanUnusualIdentifier(Token);
     Exit;
   end;
-  FPosition := Start;
-  ScanUnusualIdentifier(Token);
+  FPosition := Position;
+  Count := Position - Start;
+  Token.Name := FindName(Start, Count, Hash);
+  if Token.Name < 0 then
+    Token.Name := AddName(Start, Count, Hash);
+  Token.Kind := FNameKinds[Token.Name];
+  Token.Word := FNameWords[Token.Name];
 end;
 
 { An identifier with escapes or characters beyond ASCII. }
@@ -670,8 +859,7 @@ var
   Name: UnicodeString;
   Character: WideChar;
   Dummy: TJsToken;
-  Piece: UnicodeString;
-  CodePoint: LongWord;
+  CodePoint: LongInt;
 begin
   Name := '';
   while FPosition <= FLength do
@@ -683,17 +871,13 @@ begin
       if Peek <> 'u' then
         Fail('Invalid escape in identifier');
       Dummy := Default(TJsToken);
-      Piece := ScanEscape(Dummy, False);
-      if Piece = '' then
+      CodePoint := ScanEscape(Dummy, False);
+      if CodePoint < 0 then
         Fail('Invalid escape in identifier');
-      CodePoint := Ord(Piece[1]);
-      { A code point escape beyond the BMP comes back as a surrogate pair. }
-      if (Length(Piece) = 2) and (CodePoint >= $D800) and (CodePoint <= $DBFF) then
-        CodePoint := $10000 + ((CodePoint - $D800) shl 10) + (Ord(Piece[2]) - $DC00);
       if ((Name = '') and not IsIdentifierStart(CodePoint)) or ((Name <> '') and not IsIdentifierPart(CodePoint)) then
         Fail('Invalid identifier escape');
       Token.Escaped := True;
-      Name := Name + Piece;
+      Name := Name + CodePointText(CodePoint);
       Continue;
     end;
     if (Character >= #$D800) and (Character <= #$DBFF) and (Peek(1) >= #$DC00) and (Peek(1) <= #$DFFF) then
@@ -707,11 +891,15 @@ begin
     Name := Name + Character;
     Inc(FPosition);
   end;
-  Token.Text := Name;
-  Token.Kind := tkIdentifier;
-  if not Token.Escaped then
-    KeywordToken(Name, Token.Kind);
+  Token.Name := InternText(Name);
+  Token.Word := FNameWords[Token.Name];
+  if Token.Escaped then
+    Token.Kind := tkIdentifier
+  else
+    Token.Kind := FNameKinds[Token.Name];
 end;
+
+{ Numbers }
 
 { The common case: a decimal integer of up to 15 digits, no separators,
   fraction, exponent or suffix. False (nothing consumed) otherwise. }
@@ -744,7 +932,6 @@ begin
   end;
   FPosition := Index;
   Token.Number := Value;
-  Token.Text := Copy(FSource, Start, Index - Start);
   Result := True;
 end;
 
@@ -852,9 +1039,9 @@ begin
   if (Peek = 'n') and not IsLegacyOctal and not Token.LegacyOctal and (Pos('.', Digits) = 0) and
     ((Radix <> 10) or (Pos('e', Digits) = 0)) then
   begin
+    { The digits are taken from the source when asked for (DecodeBigInt). }
     Inc(FPosition);
     Token.Kind := tkBigInt;
-    Token.Text := UnicodeString(Digits);
     Token.Number := Radix;
   end
   else
@@ -876,22 +1063,34 @@ begin
         Value := Value * Radix + HexValue(WideChar(Digits[Code]));
     end;
     Token.Number := Value;
-    Token.Text := UnicodeString(Digits);
   end;
   if (FPosition <= FLength) and (IsIdentifierStart(Ord(FSource[FPosition])) or
     ((FSource[FPosition] >= '0') and (FSource[FPosition] <= '9'))) then
     Fail('Invalid or unexpected token');
 end;
 
+procedure TJsLexer.DecodeBigInt(const Token: TJsToken; var Digits: UnicodeString);
+var
+  Index, First: Integer;
+begin
+  Digits := '';
+  First := Token.Start;
+  if Token.Number <> 10 then
+    Inc(First, 2);
+  { Up to the n. }
+  for Index := First to Token.Finish - 2 do
+    if FSource[Index] <> '_' then
+      Digits := Digits + FSource[Index];
+end;
+
+{ Strings }
+
+{ Checked to its end; the value is decoded when asked for. }
 procedure TJsLexer.ScanString(var Token: TJsToken; Quote: WideChar);
 var
-  Text: UnicodeString;
   Character: WideChar;
-  Start: Integer;
 begin
   Inc(FPosition);
-  Text := '';
-  Start := FPosition;
   while True do
   begin
     if FPosition > FLength then
@@ -901,33 +1100,71 @@ begin
       Break;
     if Character = '\' then
     begin
-      Text := Text + Copy(FSource, Start, FPosition - Start);
       Inc(FPosition);
-      Text := Text + ScanEscape(Token, False);
-      Start := FPosition;
+      Token.HasEscape := True;
+      ScanEscape(Token, False);
       Continue;
     end;
     if (Character = #10) or (Character = #13) then
       Fail('Unterminated string');
     Inc(FPosition);
   end;
-  Text := Text + Copy(FSource, Start, FPosition - Start);
   Inc(FPosition);
   Token.Kind := tkString;
-  Token.Text := Text;
 end;
 
-procedure TJsLexer.ScanTemplate(var Token: TJsToken);
+procedure TJsLexer.DecodeString(const Token: TJsToken; var Text: UnicodeString);
 var
-  Cooked, Raw: UnicodeString;
-  Character: WideChar;
-  RawStart: Integer;
+  SavedPosition, SavedLine, SavedLineStart, Start, CodePoint: Integer;
+  Scratch: TJsToken;
 begin
-  { FPosition is just after the backquote or the closing brace. }
+  if not Token.HasEscape then
+  begin
+    SetString(Text, PWideChar(@FSource[Token.Start + 1]), Token.Finish - Token.Start - 2);
+    Exit;
+  end;
+  SavePosition(SavedPosition, SavedLine, SavedLineStart);
+  Scratch := Token;
+  Text := '';
+  FPosition := Token.Start + 1;
+  Start := FPosition;
+  while FPosition < Token.Finish - 1 do
+  begin
+    if FSource[FPosition] = '\' then
+    begin
+      Text := Text + Copy(FSource, Start, FPosition - Start);
+      Inc(FPosition);
+      CodePoint := ScanEscape(Scratch, False);
+      if CodePoint >= 0 then
+        Text := Text + CodePointText(CodePoint);
+      Start := FPosition;
+    end
+    else
+      Inc(FPosition);
+  end;
+  Text := Text + Copy(FSource, Start, Token.Finish - 1 - Start);
+  RestorePosition(SavedPosition, SavedLine, SavedLineStart);
+end;
+
+function TJsLexer.IsUseStrict(const Token: TJsToken): Boolean;
+const
+  Directive: UnicodeString = 'use strict';
+begin
+  Result := (Token.Kind = tkString) and (Token.Finish - Token.Start = Length(Directive) + 2) and
+    (CompareWord(FSource[Token.Start + 1], Directive[1], Length(Directive)) = 0);
+end;
+
+{ Templates }
+
+{ From just after the backquote or the closing brace to the end of the
+  piece (a backquote, or dollar and brace): checked, its lines counted. }
+procedure TJsLexer.ScanTemplatePiece(var Token: TJsToken);
+var
+  Character: WideChar;
+begin
   Token.Kind := tkTemplate;
   Token.InvalidEscape := False;
-  Cooked := '';
-  Raw := '';
+  Token.HasEscape := False;
   while True do
   begin
     if FPosition > FLength then
@@ -947,14 +1184,14 @@ begin
     end;
     if Character = '\' then
     begin
-      RawStart := FPosition;
+      Token.HasEscape := True;
       Inc(FPosition);
-      Cooked := Cooked + ScanEscape(Token, True);
-      Raw := Raw + NormalizeLineEnds(Copy(FSource, RawStart, FPosition - RawStart));
+      ScanEscape(Token, True);
       Continue;
     end;
     if Character = #13 then
     begin
+      Token.HasEscape := True;
       if Peek(1) = #10 then
         Inc(FPosition);
       Character := #10;
@@ -964,23 +1201,96 @@ begin
       Inc(FLine);
       FLineStart := FPosition + 1;
     end;
+    Inc(FPosition);
+  end;
+  Token.Finish := FPosition;
+end;
+
+procedure TJsLexer.ScanTemplate(var Token: TJsToken);
+begin
+  { The piece starts at the closing brace. }
+  Token.Start := FPosition - 1;
+  ScanTemplatePiece(Token);
+end;
+
+{ CR LF and CR as LF (template raw text). }
+function NormalizeLineEnds(const Text: UnicodeString): UnicodeString;
+var
+  Index: Integer;
+begin
+  Result := '';
+  Index := 1;
+  while Index <= Length(Text) do
+  begin
+    if Text[Index] = #13 then
+    begin
+      Result := Result + #10;
+      if (Index < Length(Text)) and (Text[Index + 1] = #10) then
+        Inc(Index);
+    end
+    else
+      Result := Result + Text[Index];
+    Inc(Index);
+  end;
+end;
+
+procedure TJsLexer.DecodeTemplate(const Token: TJsToken; var Cooked, Raw: UnicodeString);
+var
+  SavedPosition, SavedLine, SavedLineStart, Finish, RawStart, CodePoint: Integer;
+  Character: WideChar;
+  Scratch: TJsToken;
+begin
+  { The text between the opening backquote or closing brace and the
+    closing backquote or dollar and brace. }
+  if Token.TemplateTail then
+    Finish := Token.Finish - 1
+  else
+    Finish := Token.Finish - 2;
+  if not Token.HasEscape then
+  begin
+    SetString(Cooked, PWideChar(@FSource[Token.Start + 1]), Finish - Token.Start - 1);
+    Raw := Cooked;
+    Exit;
+  end;
+  SavePosition(SavedPosition, SavedLine, SavedLineStart);
+  Scratch := Token;
+  Cooked := '';
+  Raw := '';
+  FPosition := Token.Start + 1;
+  while FPosition < Finish do
+  begin
+    Character := FSource[FPosition];
+    if Character = '\' then
+    begin
+      RawStart := FPosition;
+      Inc(FPosition);
+      CodePoint := ScanEscape(Scratch, True);
+      if CodePoint >= 0 then
+        Cooked := Cooked + CodePointText(CodePoint);
+      Raw := Raw + NormalizeLineEnds(Copy(FSource, RawStart, FPosition - RawStart));
+      Continue;
+    end;
+    if Character = #13 then
+    begin
+      if (FPosition + 1 < Finish) and (FSource[FPosition + 1] = #10) then
+        Inc(FPosition);
+      Character := #10;
+    end;
     Cooked := Cooked + Character;
     Raw := Raw + Character;
     Inc(FPosition);
   end;
-  Token.Text := Cooked;
-  Token.Raw := Raw;
-  Token.Finish := FPosition;
+  RestorePosition(SavedPosition, SavedLine, SavedLineStart);
 end;
+
+{ Regular expressions }
 
 procedure TJsLexer.ScanRegExp(var Token: TJsToken);
 var
-  Body, Flags: UnicodeString;
   InClass: Boolean;
   Character: WideChar;
 begin
   FPosition := Token.Start + 1;
-  Body := '';
   InClass := False;
   while True do
   begin
@@ -992,7 +1302,6 @@ begin
     begin
       if (FPosition > FLength) or IsLineTerminator(FSource[FPosition]) then
         Fail('Invalid regular expression: missing /');
-      Body := Body + Character + FSource[FPosition];
       Inc(FPosition);
       Continue;
     end;
@@ -1002,19 +1311,21 @@ begin
       InClass := False
     else if (Character = '/') and not InClass then
       Break;
-    Body := Body + Character;
   end;
-  Flags := '';
+  Token.FlagsStart := FPosition;
   while (FPosition <= FLength) and IsIdentifierPart(Ord(FSource[FPosition])) do
-  begin
-    Flags := Flags + FSource[FPosition];
     Inc(FPosition);
-  end;
   Token.Kind := tkRegExp;
-  Token.Text := Body;
-  Token.Raw := Flags;
   Token.Finish := FPosition;
 end;
+
+procedure TJsLexer.DecodeRegExp(const Token: TJsToken; var Body, Flags: UnicodeString);
+begin
+  Body := Copy(FSource, Token.Start + 1, Token.FlagsStart - Token.Start - 2);
+  Flags := Copy(FSource, Token.FlagsStart, Token.Finish - Token.FlagsStart);
+end;
+
+{ Punctuators }
 
 procedure TJsLexer.ScanPunctuator(var Token: TJsToken);
 var
@@ -1022,7 +1333,7 @@ var
   BestLength: Integer;
   Next1, Next2, Next3: WideChar;
 
-  procedure Take(Kind: TJsTokenKind; Size: Integer);
+  procedure Take(Kind: TJsTokenKind; Size: Integer); inline;
   begin
     Best := Kind;
     BestLength := Size;
@@ -1032,8 +1343,6 @@ begin
   Best := tkEnd;
   BestLength := 0;
   Next1 := Peek(1);
-  Next2 := Peek(2);
-  Next3 := Peek(3);
   { The longest punctuator starting here. }
   case FSource[FPosition] of
     '{': Take(tkLeftBrace, 1);
@@ -1049,14 +1358,14 @@ begin
     '#': Take(tkHash, 1);
     '@': Take(tkAt, 1);
     '.':
-      if (Next1 = '.') and (Next2 = '.') then
+      if (Next1 = '.') and (Peek(2) = '.') then
         Take(tkEllipsis, 3)
       else
         Take(tkDot, 1);
     '<':
       if Next1 = '<' then
       begin
-        if Next2 = '=' then
+        if Peek(2) = '=' then
           Take(tkShiftLeftAssign, 3)
         else
           Take(tkShiftLeft, 2);
@@ -1068,8 +1377,10 @@ begin
     '>':
       if Next1 = '>' then
       begin
+        Next2 := Peek(2);
         if Next2 = '>' then
         begin
+          Next3 := Peek(3);
           if Next3 = '=' then
             Take(tkShiftRightUnsignedAssign, 4)
           else
@@ -1087,7 +1398,7 @@ begin
     '=':
       if Next1 = '=' then
       begin
-        if Next2 = '=' then
+        if Peek(2) = '=' then
           Take(tkStrictEqual, 3)
         else
           Take(tkEqual, 2);
@@ -1099,7 +1410,7 @@ begin
     '!':
       if Next1 = '=' then
       begin
-        if Next2 = '=' then
+        if Peek(2) = '=' then
           Take(tkStrictNotEqual, 3)
         else
           Take(tkNotEqual, 2);
@@ -1123,7 +1434,7 @@ begin
     '*':
       if Next1 = '*' then
       begin
-        if Next2 = '=' then
+        if Peek(2) = '=' then
           Take(tkStarStarAssign, 3)
         else
           Take(tkStarStar, 2);
@@ -1145,7 +1456,7 @@ begin
     '&':
       if Next1 = '&' then
       begin
-        if Next2 = '=' then
+        if Peek(2) = '=' then
           Take(tkAndAndAssign, 3)
         else
           Take(tkAndAnd, 2);
@@ -1157,7 +1468,7 @@ begin
     '|':
       if Next1 = '|' then
       begin
-        if Next2 = '=' then
+        if Peek(2) = '=' then
           Take(tkOrOrAssign, 3)
         else
           Take(tkOrOr, 2);
@@ -1174,21 +1485,16 @@ begin
     '?':
       if Next1 = '?' then
       begin
-        if Next2 = '=' then
+        if Peek(2) = '=' then
           Take(tkQuestionQuestionAssign, 3)
         else
           Take(tkQuestionQuestion, 2);
       end
-      else if Next1 = '.' then
+      { ?. followed by a digit is ? then a number (a ? .5 : b). }
+      else if (Next1 = '.') and not ((Peek(2) >= '0') and (Peek(2) <= '9')) then
         Take(tkQuestionDot, 2)
       else
         Take(tkQuestion, 1);
-  end;
-  { ?. followed by a digit is ? then a number (a ? .5 : b). }
-  if (Best = tkQuestionDot) and (Peek(2) >= '0') and (Peek(2) <= '9') then
-  begin
-    Best := tkQuestion;
-    BestLength := 1;
   end;
   if Best = tkEnd then
     Fail('Invalid or unexpected token');
@@ -1200,16 +1506,16 @@ procedure TJsLexer.Next(out Token: TJsToken);
 var
   Character: WideChar;
 begin
-  { Field by field: a whole-record assignment copies the strings
-    through their type information, for every token. }
   Token.Kind := tkEnd;
-  Token.Text := '';
-  Token.Raw := '';
+  Token.Word := jwNone;
+  Token.Name := -1;
   Token.Number := 0;
   Token.TemplateTail := False;
   Token.InvalidEscape := False;
   Token.LegacyOctal := False;
   Token.Escaped := False;
+  Token.HasEscape := False;
+  Token.FlagsStart := 0;
   FNewline := False;
   SkipSpace;
   Token.NewlineBefore := FNewline;
@@ -1218,7 +1524,6 @@ begin
   Token.Column := FPosition - FLineStart + 1;
   if FPosition > FLength then
   begin
-    Token.Kind := tkEnd;
     Token.Finish := FPosition;
     Exit;
   end;
@@ -1233,7 +1538,7 @@ begin
     '`':
       begin
         Inc(FPosition);
-        ScanTemplate(Token);
+        ScanTemplatePiece(Token);
       end;
     '#':
       begin
@@ -1243,6 +1548,7 @@ begin
         begin
           ScanIdentifier(Token);
           Token.Kind := tkPrivateName;
+          Token.Word := jwNone;
         end
         else
           Fail('Invalid or unexpected token');
@@ -1262,4 +1568,9 @@ begin
   Token.Finish := FPosition;
 end;
 
+initialization
+  FillCharacterClasses;
+  WordsLexer := TJsLexer.Create('');
+finalization
+  WordsLexer.Free;
 end.
