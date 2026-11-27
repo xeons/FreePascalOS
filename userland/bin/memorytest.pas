@@ -123,7 +123,15 @@ begin
   Taken := 0;
   while (LimitMebibytes = 0) or (Taken < LimitMebibytes) do
   begin
-    Block := PByte(AllocateMemory(StepMebibytes * Mebibyte));
+    { The system's commit limit can refuse the memory before it runs
+      short (the runtime raises EOutOfMemory for a refused block): the
+      hog stops there as when memory is short. }
+    try
+      Block := PByte(AllocateMemory(StepMebibytes * Mebibyte));
+    except
+      on EOutOfMemory do
+        Block := nil;
+    end;
     if Block = nil then
     begin
       PrintStringLine(Format('memorytest: hog could not take more than %d MiB', [Taken]));
