@@ -283,6 +283,7 @@ begin
   end;
   Inc(BoxesLaidOut);
   Box.MarkOverflowDirty;
+  Box.ContentShift := 0;
   Box.Flags := Box.Flags - [bfSawOutsideFloats, bfHasEscapingAbsolute, bfHasEscapingFloats];
   FloatsBefore := 0;
   if Input.Floats <> nil then

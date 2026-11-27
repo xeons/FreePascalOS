@@ -30,7 +30,7 @@
   for the frames reflowed.
 
   What a child adds: its border box (moved by position: relative; not a
-  text box's, its fragments count instead) and, unless it clips its
+  text box's or line break's, their fragments count instead) and, unless it clips its
   overflow, its descendants' extent. Fixed boxes add nothing (they
   scroll with the viewport, not in it). An inline box's descendants are
   placed relative to its containing block, so it passes their extent up
@@ -109,7 +109,9 @@ begin
     begin
       ChildX := Child.X + Child.RelativeX;
       ChildY := Child.Y + Child.RelativeY;
-      if Child.Kind <> bkText then
+      { A text box's or line break's fragments count instead (a line
+        break box has no position of its own). }
+      if not (Child.Kind in [bkText, bkLineBreak]) then
         Reach(Right, Bottom, ChildX + Child.Width, ChildY + Child.Height);
       if not (bfClipsOverflow in Child.Flags) then
         Reach(Right, Bottom, ChildX + Child.DescendantRight, ChildY + Child.DescendantBottom);

@@ -249,6 +249,9 @@ type
     { Space above the border box that belongs to the box (a table's
       captions), after its collapsed top margin. }
     LeadingOffset: Single;
+    { How far ShiftLayoutContents moved its contents since its layout (a
+      skipped layout keeps them where they were moved). }
+    ContentShift: Single;
     constructor Create(AKind: TBoxKind; ANode: TNode; AStyle: TCssComputedStyle);
     destructor Destroy; override;
     procedure AppendChild(Child: TLayoutBox);
@@ -482,6 +485,7 @@ begin
   if Delta = 0 then
     Exit;
   Box.MarkOverflowDirty;
+  Box.ContentShift := Box.ContentShift + Delta;
   ShiftChildren(Box, Delta);
   if Box.Inline <> nil then
   begin

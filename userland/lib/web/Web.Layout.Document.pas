@@ -157,7 +157,8 @@ implementation
 
 uses
   Web.Profiling,
-  Math, Web.Atoms, Css.MediaQueries, Css.Keywords, Css.PropertyIds, Web.Style.NodeData, Web.Layout.Counters, Web.Layout.Dispatch,
+  Math, Web.Atoms, Css.MediaQueries, Css.Keywords, Css.PropertyIds, Css.ComputedValues, Web.Style.NodeData,
+  Web.Layout.Counters, Web.Layout.Dispatch,
   Web.Layout.Positioned, Web.Layout.BoxGeometry, Web.Text.FontInstances, Web.Svg.InlineImages,
   Web.Layout.ViewportOverflow, Web.Layout.Overflow;
 
@@ -321,6 +322,25 @@ begin
   Result := True;
 end;
 
+{ Whether a style change alters how the element's own box is made: a
+  scroll container or not, a formatting context of its own (overflow,
+  columns), legacy line clamping (a block instead of a flex box). Those
+  are read when the box is built, so the box is built again. }
+function ChangesOwnBox(Old, New: TCssComputedStyle): Boolean;
+const
+  OwnBoxProperties: array[0..4] of TCssPropertyId = (cpOverflowX, cpOverflowY, cpColumnCount, cpWebkitLineClamp,
+    cpWebkitBoxOrient);
+var
+  Index: Integer;
+begin
+  if (Old = nil) or (New = nil) then
+    Exit(False);
+  for Index := Low(OwnBoxProperties) to High(OwnBoxProperties) do
+    if not SameComputed(Old.Value(OwnBoxProperties[Index])^, New.Value(OwnBoxProperties[Index])^) then
+      Exit(True);
+  Result := False;
+end;
+
 procedure TDocumentLayout.StyleChanged(Element: TElement; Change: TStyleChangeKind);
 var
   Box: TLayoutBox;
@@ -332,7 +352,7 @@ begin
   Inc(FPaintVersion);
   Box := BoxOf(Element);
   Data := ExistingNodeData(Element);
-  if (Change = scBoxes) or (Box = nil) then
+  if (Change = scBoxes) or (Box = nil) or ((Data <> nil) and ChangesOwnBox(Box.Style, Data^.Style)) then
   begin
     if StyleParentOf(Element) <> nil then
       MarkBoxesOf(StyleParentOf(Element));
