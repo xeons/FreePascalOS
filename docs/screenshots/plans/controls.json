@@ -1,1 +1,1 @@
-[["sh", "controlstour > /dev/null 2>&1 &"], ["sleep", 5], ["shot", "controls"]]
+[["sh", "controlstour > /dev/null 2>&1 &"], ["sleep", 5], ["move", 1250, 760], ["sleep", 1], ["shot", "controls"]]

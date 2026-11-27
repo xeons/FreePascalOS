@@ -21,10 +21,19 @@ taken by `scripts/take-screenshots.py` from the plans in
 
 | | |
 |---|---|
-| ![A terminal running sysinfo](docs/screenshots/sysinfo.png) | ![The controls tour](docs/screenshots/controls.png) |
-| A terminal running `sysinfo` | The controls tour: banded group boxes, split buttons, progress |
-| ![Files and the image viewer](docs/screenshots/files-viewer.png) | ![Paint and the calculator](docs/screenshots/paint-calculator.png) |
-| Files and the image viewer | Paint and the calculator |
+| ![Tuxcat on Wikipedia](docs/screenshots/tuxcat-wikipedia.png) | ![Tuxcat running WebAssembly](docs/screenshots/tuxcat-webassembly.png) |
+| Tuxcat, the web browser, on Wikipedia | Tuxcat running WebAssembly: a 394 byte module draws the Mandelbrot set ([source](docs/screenshots/pages)) |
+| ![OpenGL gears and a Vulkan cube](docs/screenshots/gears-cube.png) | ![Lua and SQLite in the terminal](docs/screenshots/c-programs.png) |
+| OpenGL gears and a Vulkan cube, rendered by the Mesa port | Ported C programs in the terminal: Lua and SQLite |
+| ![A program that stopped responding](docs/screenshots/not-responding.png) | ![Files and the image viewer](docs/screenshots/files-viewer.png) |
+| A program that stopped responding: End task or Wait, with the Task Manager | Files and the image viewer |
+| ![A terminal running sysinfo](docs/screenshots/sysinfo.png) | ![Paint and the calculator](docs/screenshots/paint-calculator.png) |
+| A terminal running `sysinfo` | Paint and the calculator |
+| ![The controls tour](docs/screenshots/controls.png) | |
+| The controls tour: banded group boxes, split buttons, progress | |
+
+The gears, the cube and the C programs need the C toolchain (`make
+c-toolchain`); without it `make system-disk` leaves those ports out.
 
 ## What works today
 

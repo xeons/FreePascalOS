@@ -1,0 +1,2 @@
+[["sh", "browser file:///volumes/disk0p1/pages/webassembly.html > /dev/null 2>&1 &"], ["sleep", 25],
+ ["move", 1250, 760], ["sleep", 1], ["shot", "tuxcat-webassembly"]]

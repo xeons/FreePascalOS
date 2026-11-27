@@ -42,7 +42,9 @@ output directory is docs/screenshots. A plan is a JSON list of steps:
 The plans for the README's screenshots are in docs/screenshots/plans.
 A sample picture (a drawn landscape, sample.png) is put on the EFI
 partition, which the system mounts at /volumes/disk0p1, for plans that
-open a picture.
+open a picture; so are the pages of docs/screenshots/pages, under
+/volumes/disk0p1/pages, for plans that open one in Tuxcat. The machine
+has 4 GiB, enough for the browser on real sites.
 """
 
 import json
@@ -65,7 +67,12 @@ FIRMWARE_VARIABLES = '/usr/share/edk2/x64/OVMF_VARS.4m.fd'
 # QEMU key names for characters that are not their own name.
 KEY_NAMES = {' ': 'spc', '-': 'minus', '.': 'dot', '/': 'slash', '\n': 'ret', '=': 'equal', ',': 'comma',
              '*': 'shift-8', '(': 'shift-9', ')': 'shift-0', '+': 'shift-equal', '_': 'shift-minus',
-             '|': 'shift-backslash', '~': 'shift-grave_accent', '&': 'shift-7'}
+             '|': 'shift-backslash', '~': 'shift-grave_accent', '&': 'shift-7',
+             "'": 'apostrophe', '"': 'shift-apostrophe', ';': 'semicolon', ':': 'shift-semicolon',
+             '^': 'shift-6', '%': 'shift-5', '$': 'shift-4', '#': 'shift-3', '@': 'shift-2', '!': 'shift-1',
+             '[': 'bracket_left', ']': 'bracket_right', '{': 'shift-bracket_left', '}': 'shift-bracket_right',
+             '<': 'shift-comma', '>': 'shift-dot', '?': 'shift-slash', '\\': 'backslash', '`': 'grave_accent',
+             '\t': 'tab'}
 
 
 def draw_sample_picture(path):
@@ -102,12 +109,15 @@ class Machine:
         with open(os.path.join(esp, 'FreePascalOS', 'options.txt'), 'w') as options:
             options.write('autologin=user\n')
         draw_sample_picture(os.path.join(esp, 'sample.png'))
+        pages = os.path.join(root, 'docs/screenshots/pages')
+        if os.path.isdir(pages):
+            shutil.copytree(pages, os.path.join(esp, 'pages'))
         shutil.copy(os.path.join(root, 'build/amd64/system-disk.img'), os.path.join(work, 'system.img'))
         shutil.copy(FIRMWARE_VARIABLES, os.path.join(work, 'vars.fd'))
         for suffix in ('.in', '.out'):
             os.mkfifo(os.path.join(work, 'serial' + suffix))
         self.process = subprocess.Popen(
-            ['qemu-system-x86_64', '-machine', 'q35', '-accel', 'kvm', '-cpu', 'host', '-m', '1G', '-smp', '4',
+            ['qemu-system-x86_64', '-machine', 'q35', '-accel', 'kvm', '-cpu', 'host', '-m', '4G', '-smp', '4',
              '-drive', 'if=pflash,format=raw,readonly=on,file=' + FIRMWARE_CODE,
              '-drive', 'if=pflash,format=raw,file=vars.fd',
              '-drive', 'format=raw,file=fat:rw:esp',

@@ -1,0 +1,2 @@
+[["sh", "browser https://en.wikipedia.org/wiki/Free_Pascal > /dev/null 2>&1 &"], ["sleep", 45],
+ ["move", 1250, 760], ["sleep", 1], ["shot", "tuxcat-wikipedia"]]

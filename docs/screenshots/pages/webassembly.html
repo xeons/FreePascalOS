@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<!-- Tuxcat running WebAssembly, for the README's screenshot: the module is
+     mandelbrot.wat beside this file, encoded with tools/WasmSpecTest
+     (--dump) and embedded below. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>WebAssembly in Tuxcat</title>
+<style>
+  body { margin: 0; font: 15px/1.5 sans-serif; background: #f4f2fb; color: #222; }
+  header { padding: 16px 28px; background: linear-gradient(#5b4b9a, #43357a); color: #fff; }
+  header h1 { margin: 0; font-size: 22px; }
+  main { display: flex; gap: 24px; padding: 20px 28px; align-items: flex-start; }
+  canvas { border-radius: 10px; box-shadow: 0 4px 14px rgba(0, 0, 0, 0.25); }
+  aside { flex: 1; background: #fff; border-radius: 10px; padding: 14px 18px;
+          box-shadow: 0 1px 4px rgba(0, 0, 0, 0.15); }
+  code { background: #ece8f8; padding: 1px 5px; border-radius: 4px; }
+  dt { font-weight: bold; margin-top: 8px; }
+</style>
+</head>
+<body>
+<header><h1>The Mandelbrot set, drawn by WebAssembly</h1></header>
+<main>
+  <canvas id="picture" width="560" height="420"></canvas>
+  <aside>
+    <p>A 394 byte WebAssembly module computes every pixel; the page copies
+       its memory into the canvas with <code>putImageData</code>.</p>
+    <dl>
+      <dt>Size</dt><dd id="size"></dd>
+      <dt>Iterations</dt><dd id="iterations"></dd>
+      <dt>Time</dt><dd id="time">computing...</dd>
+      <dt>Engine</dt><dd>libwasm: WebAssembly 3.0, run by the system's own interpreter</dd>
+    </dl>
+  </aside>
+</main>
+<script>
+const moduleBytes = Uint8Array.from(atob("AGFzbQEAAAABDgJgA39/fwF/YAN/f38AAwMCAAEFAwEAIAcTAgZtZW1vcnkCAAZyZW5kZXIAAQrQAgIaAQF/IAIgACABbGohA0H/ASADIANB/wFKGwuyAgIEfwV8QQAhBAJAA0AgBCABTg0BQQAhAwJAA0AgAyAATg0BIAO3IAC3o0SamZmZmZkJQKJEZmZmZmZmAkChIQcgBLcgAbejRDMzMzMzMwNAokQzMzMzMzPzP6EhCEQAAAAAAAAAACEJRAAAAAAAAAAAIQpBACEFAkADQCAFIAJODQEgCSAJoiAKIAqioEQAAAAAAAAQQGQNASAJIAmiIAogCqKhIAegIQtEAAAAAAAAAEAgCaIgCqIgCKAhCiALIQkgBUEBaiEFDAALCyAEIABsIANqQQJ0IQYgBSACTgRAIAZBkJj4eDYCAAUgBiAFQQpBCBAAOgAAIAYgBUEEQQYQADoAASAGIAVBB0EoEAA6AAIgBkH/AToAAwsgA0EBaiEDDAALCyAEQQFqIQQMAAsLCw=="), character => character.charCodeAt(0));
+const canvas = document.getElementById("picture");
+const iterations = 200;
+WebAssembly.instantiate(moduleBytes).then(({ instance }) => {
+  const started = performance.now();
+  instance.exports.render(canvas.width, canvas.height, iterations);
+  const elapsed = performance.now() - started;
+  const pixels = new Uint8ClampedArray(instance.exports.memory.buffer, 0, canvas.width * canvas.height * 4);
+  canvas.getContext("2d").putImageData(new ImageData(pixels, canvas.width, canvas.height), 0, 0);
+  document.getElementById("size").textContent = canvas.width + " x " + canvas.height + " pixels";
+  document.getElementById("iterations").textContent = "up to " + iterations + " per pixel";
+  document.getElementById("time").textContent = elapsed.toFixed(0) + " ms";
+});
+</script>
+</body>
+</html>

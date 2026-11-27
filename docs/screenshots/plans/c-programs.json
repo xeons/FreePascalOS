@@ -1,0 +1,7 @@
+[["sh", "terminal -x 160 -y 60 > /dev/null 2>&1 &"], ["sleep", 4],
+ ["keys", "lua -v\n"], ["sleep", 1],
+ ["keys", "lua -e 'for n = 1, 5 do print(n, n ^ 2, (\"*\"):rep(n)) end'\n"], ["sleep", 2],
+ ["keys", "sqlite3 -version | cut -c1-30\n"], ["sleep", 2],
+ ["keys", "q=\"select 'Jupiter' planet, 95 moons union select 'Mars', 2\"\n"], ["sleep", 1],
+ ["keys", "sqlite3 -box :memory: \"$q\"\n"], ["sleep", 3],
+ ["move", 1250, 760], ["sleep", 1], ["shot", "c-programs"]]

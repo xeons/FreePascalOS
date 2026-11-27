@@ -14,3 +14,7 @@ binutils
 # OpenGL and OpenGL ES (Mesa, software rendering) with their tests and
 # demonstrations. Skipped without the C toolchain.
 gldemos
+# The Lua interpreter and SQLite's shell: ported C programs to run in the
+# terminal. Skipped without the C toolchain.
+lua
+sqlite3

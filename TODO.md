@@ -1578,6 +1578,11 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
 - [ ] Shared memories and threads, stack switching and the other post-3.0 proposals
 - [ ] Faster SIMD (whole-vector operations instead of lane loops); caching compiled modules
 
+- [ ] sh's line editor scrolls a line longer than the terminal sideways instead of wrapping it, and the
+      line stays scrolled after Enter (only its tail is left on the screen)
+- [ ] Terminal: box drawing joins (sqlite3 -box): the double rule under a header runs through the vertical
+      lines instead of meeting them
+
 ## Tooling
 
 - [x] `make test`: boot headless in QEMU, fail on panic or missing self-test results
