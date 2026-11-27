@@ -146,6 +146,38 @@ begin
     Result := nil;
 end;
 
+{ Errors of the property paths, their messages made here rather than in
+  the hot functions (see ThrowNamingKey). }
+
+type
+  TKeyNaming = (knNone, knKey, knValue);
+
+{ "Cannot read properties of null (reading 'x')": Naming says how the
+  key is shown, if at all. }
+function ThrowPropertiesOfNullish(R: TJsRealm; const Verb, Gerund: string; Base, Key: TJsValue;
+  Naming: TKeyNaming): TJsValue;
+var
+  Text: string;
+begin
+  Text := 'Cannot ' + Verb + ' properties of ' + ValueToPascal(R, Base);
+  case Naming of
+    knKey: Text := Text + ' (' + Gerund + ' ''' + KeyToPascal(R, Key) + ''')';
+    knValue: Text := Text + ' (' + Gerund + ' ''' + ValueToPascal(R, Key) + ''')';
+  end;
+  Result := R.ThrowTypeError(Text);
+end;
+
+function ThrowCannotCreateProperty(R: TJsRealm; Key, Base: TJsValue): TJsValue;
+begin
+  Result := R.ThrowTypeError('Cannot create property ''' + KeyToPascal(R, Key) + ''' on ' + ValueToPascal(R, Base));
+end;
+
+function ThrowCannotSearchIn(R: TJsRealm; Key, Target: TJsValue): TJsValue;
+begin
+  Result := R.ThrowTypeError('Cannot use ''in'' operator to search for ''' + ValueToPascal(R, Key) + ''' in ' +
+    ValueToPascal(R, Target));
+end;
+
 function GetPropertyByKey(R: TJsRealm; Base, Key: TJsValue): TJsValue;
 var
   Text: TJsString;
@@ -170,8 +202,7 @@ begin
       Exit(JsInteger(Text.Length));
   end;
   if JsIsNullish(Base) then
-    Exit(R.ThrowTypeError('Cannot read properties of ' + ValueToPascal(R, Base) + ' (reading ''' +
-      KeyToPascal(R, Key) + ''')'));
+    Exit(ThrowPropertiesOfNullish(R, 'read', 'reading', Base, Key, knKey));
   Prototype := PrototypeForPrimitive(R, Base);
   Result := Prototype.Get(R, Key, Base);
 end;
@@ -181,9 +212,8 @@ begin
   if JsIsNullish(Base) then
   begin
     if JsIsObject(Key) then
-      Exit(R.ThrowTypeError('Cannot read properties of ' + ValueToPascal(R, Base)));
-    Exit(R.ThrowTypeError('Cannot read properties of ' + ValueToPascal(R, Base) + ' (reading ''' +
-      ValueToPascal(R, Key) + ''')'));
+      Exit(ThrowPropertiesOfNullish(R, 'read', 'reading', Base, Key, knNone));
+    Exit(ThrowPropertiesOfNullish(R, 'read', 'reading', Base, Key, knValue));
   end;
   if not (JsIsInteger(Key) and (JsAsInteger(Key) >= 0)) then
   begin
@@ -205,8 +235,7 @@ begin
   begin
     if JsIsNullish(Base) then
     begin
-      R.ThrowTypeError('Cannot set properties of ' + ValueToPascal(R, Base) + ' (setting ''' +
-        KeyToPascal(R, Key) + ''')');
+      ThrowPropertiesOfNullish(R, 'set', 'setting', Base, Key, knKey);
       Exit(False);
     end;
     Prototype := PrototypeForPrimitive(R, Base);
@@ -217,9 +246,9 @@ begin
   if (Outcome = 0) and Strict then
   begin
     if JsIsObject(Base) then
-      R.ThrowTypeError('Cannot assign to read only property ''' + KeyToPascal(R, Key) + ''' of object')
+      ThrowNamingKey(R, ekType, 'Cannot assign to read only property ''', Key, ''' of object')
     else
-      R.ThrowTypeError('Cannot create property ''' + KeyToPascal(R, Key) + ''' on ' + ValueToPascal(R, Base));
+      ThrowCannotCreateProperty(R, Key, Base);
     Exit(False);
   end;
   Result := True;
@@ -229,7 +258,7 @@ function SetProperty(R: TJsRealm; Base, Key, Value: TJsValue; Strict: Boolean): 
 begin
   if JsIsNullish(Base) then
   begin
-    R.ThrowTypeError('Cannot set properties of ' + ValueToPascal(R, Base));
+    ThrowPropertiesOfNullish(R, 'set', 'setting', Base, Key, knNone);
     Exit(False);
   end;
   if not (JsIsInteger(Key) and (JsAsInteger(Key) >= 0)) then
@@ -256,7 +285,7 @@ begin
   if Outcome < 0 then
     Exit(JsException);
   if (Outcome = 0) and Strict then
-    Exit(R.ThrowTypeError('Cannot delete property ''' + KeyToPascal(R, Key) + ''''));
+    Exit(ThrowNamingKey(R, ekType, 'Cannot delete property ''', Key, ''''));
   Result := JsBoolean(Outcome > 0);
 end;
 
@@ -265,8 +294,7 @@ var
   Outcome: Integer;
 begin
   if not JsIsObject(Target) then
-    Exit(R.ThrowTypeError('Cannot use ''in'' operator to search for ''' + ValueToPascal(R, Key) + ''' in ' +
-      ValueToPascal(R, Target)));
+    Exit(ThrowCannotSearchIn(R, Key, Target));
   Key := ToPropertyKey(R, Key);
   if Key = JsException then
     Exit(JsException);
@@ -284,7 +312,7 @@ begin
   if JsIsNullish(Result) then
     Exit(JsUndefined);
   if not JsIsCallable(Result) then
-    Exit(R.ThrowTypeError(KeyToPascal(R, Key) + ' is not a function'));
+    Exit(ThrowNamingKey(R, ekType, '', Key, ' is not a function'));
 end;
 
 function CallMethod(R: TJsRealm; Value: TJsValue; Name: TJsAtomName; Args: PJsValue; Count: Integer): TJsValue;
@@ -578,7 +606,7 @@ begin
   begin
     if JsIsNullish(Value) then
     begin
-      R.ThrowTypeError(ValueToPascal(R, Value) + ' is not iterable');
+      ThrowNamingValue(R, ekType, '', Value, ' is not iterable');
       Exit(False);
     end;
     Method := GetMethod(R, Value, R.Runtime.SymbolValue(wsIterator));
@@ -587,7 +615,7 @@ begin
   end;
   if Method = JsUndefined then
   begin
-    R.ThrowTypeError(ValueToPascal(R, Value) + ' is not iterable');
+    ThrowNamingValue(R, ekType, '', Value, ' is not iterable');
     Exit(False);
   end;
   Made := R.Call(Method, Value, nil, 0);
@@ -621,7 +649,7 @@ begin
   if not JsIsObject(Outcome) then
   begin
     Iterator.Done := True;
-    R.ThrowTypeError('Iterator result ' + ValueToPascal(R, Outcome) + ' is not an object');
+    ThrowNamingValue(R, ekType, 'Iterator result ', Outcome, ' is not an object');
     Exit(False);
   end;
   Done := JsAsObject(Outcome).GetValue(R, R.Atom(anDone));
@@ -829,12 +857,18 @@ begin
   Result := ToLength(R, Value, Length);
 end;
 
+{ Apart from IndexKey, which then needs no text of its own. }
+function IndexKeyText(R: TJsRealm; Index: Int64): TJsValue;
+begin
+  Result := R.Intern(IntToStr(Index));
+end;
+
 function IndexKey(R: TJsRealm; Index: Int64): TJsValue;
 begin
   if (Index >= 0) and (Index <= 2147483647) then
     Result := JsInteger(LongInt(Index))
   else
-    Result := R.Intern(IntToStr(Index));
+    Result := IndexKeyText(R, Index);
 end;
 
 function CreateListFromArrayLike(R: TJsRealm; Value: TJsValue; out Values: TJsValueList): Boolean;

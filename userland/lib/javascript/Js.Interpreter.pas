@@ -145,6 +145,12 @@ type
     function FindHandler(Frame: PJsFrame; IsReturnCompletion: Boolean): Integer;
     { Property access with inline caches. }
     function GetNamedSlow(Base, Key: TJsValue; Cache: PJsPropertyCache): TJsValue;
+    { A cache entry for Target's shape of a property found further up the
+      chain than its prototype, still valid; nil when there is none. }
+    function ChainEntryFor(Target: TJsObject; Cache: PJsPropertyCache): PJsPropertyCache;
+    { Caches Key when it is found past Target's prototype, through
+      cacheable prototypes only. }
+    procedure FillChainEntry(Target: TJsObject; Key: TJsValue; Cache: PJsPropertyCache);
     function SetNamedSlow(Base, Key, Value: TJsValue; Cache: PJsPropertyCache; Strict: Boolean): Boolean;
     function DefineFieldSlow(Target: TJsObject; Key, Value: TJsValue; Cache: PJsPropertyCache): Boolean;
     function GetGlobal(Key: TJsValue; Cache: PJsPropertyCache; ForTypeof: Boolean): TJsValue;
@@ -164,6 +170,14 @@ type
     function ForInNext(Iterator: TJsForInIterator; out Key: TJsValue): Integer;
     function SuperCall(Function_, NewTarget: TJsValue; Args: PJsValue; Count: Integer): TJsValue;
     function NotCallable(Value: TJsValue): TJsValue;
+    { Errors with made messages, apart from the hot functions that throw
+      them (as ThrowNamingKey, Js.Conversions). }
+    function ThrowUninitialized(Name: TJsValue): TJsValue;
+    function ThrowClassConstructorCall(Code: TJsCode): TJsValue;
+    { Bound function calls, apart from Call and Construct for the same
+      reason (the merged argument list). }
+    function CallBound(Bound: TJsBoundFunction; Args: PJsValue; Count: Integer): TJsValue;
+    function ConstructBound(Bound: TJsBoundFunction; Args: PJsValue; Count: Integer; NewTarget: TJsValue): TJsValue;
     { The source text of the callee of the call the running frame is at
       ("a.b.c" of "a.b.c(x)"), '' when it is not a plain name or member
       chain. }
@@ -497,6 +511,16 @@ begin
   Result := ThrowTypeError(Callee + ' is not a function');
 end;
 
+function TJsInterpreterRealm.ThrowUninitialized(Name: TJsValue): TJsValue;
+begin
+  Result := ThrowNamingKey(Self, ekReference, 'Cannot access ''', Name, ''' before initialization');
+end;
+
+function TJsInterpreterRealm.ThrowClassConstructorCall(Code: TJsCode): TJsValue;
+begin
+  Result := ThrowTypeError('Class constructor ' + StringToUtf8(Heap, Code.Name) + ' cannot be invoked without ''new''');
+end;
+
 function TJsInterpreterRealm.CurrentCalleeText: string;
 const
   MaximumCalleeLength = 120;
@@ -766,7 +790,7 @@ var
 begin
   Code := Closure.Code;
   if ((Code.Flags and CodeClassConstructor) <> 0) and not IsConstruct then
-    Exit(ThrowTypeError('Class constructor ' + StringToUtf8(Heap, Code.Name) + ' cannot be invoked without ''new'''));
+    Exit(ThrowClassConstructorCall(Code));
   if (Code.Flags and CodeGenerator) <> 0 then
     Exit(StartGenerator(Closure, This, Args, Count));
   if (Code.Flags and CodeAsync) <> 0 then
@@ -1025,26 +1049,26 @@ begin
   Result := (FFrameCount > 0) or (FRunDepth > 0);
 end;
 
+{ Native callbacks return JsException rather than raise (Js.Engine), so
+  the run depth needs no exception frame to be put back, here as in the
+  interpreter's own call instruction. }
 function TJsInterpreterRealm.Call(F, This: TJsValue; Args: PJsValue; Count: Integer): TJsValue;
 var
   Target: TJsObject;
   Native: TJsNativeFunction;
-  Bound: TJsBoundFunction;
-  Merged: TJsValueList;
-  Index, BoundCount: Integer;
 begin
   if not CanEnter then
     Exit(RefuseEntry);
   if not JsIsObject(F) then
     Exit(NotCallable(F));
   Target := JsAsObject(F);
-  if Target is TJsClosure then
+  if IsClosure(Target) then
   begin
     if IsForeign(TJsClosure(Target).Realm) then
       Exit(ForeignCall(TJsClosure(Target).Realm, F, This, Args, Count));
     Exit(CallClosure(TJsClosure(Target), This, Args, Count, JsUndefined, False));
   end;
-  if Target is TJsNativeFunction then
+  if IsNativeFunction(Target) then
   begin
     Native := TJsNativeFunction(Target);
     if IsForeign(Native.Realm) then
@@ -1052,55 +1076,54 @@ begin
     if FRunDepth >= MaximumRunDepth then
       Exit(ThrowRangeError('Maximum call stack size exceeded'));
     Inc(FRunDepth);
-    try
-      if Assigned(Native.Callback) then
-        Result := Native.Callback(Self, This, PJsValueArray(Args), Count, Native, JsUndefined)
-      else
-        Result := Native.Method(Self, This, PJsValueArray(Args), Count, Native, JsUndefined);
-    finally
-      Dec(FRunDepth);
-    end;
+    if Assigned(Native.Callback) then
+      Result := Native.Callback(Self, This, PJsValueArray(Args), Count, Native, JsUndefined)
+    else
+      Result := Native.Method(Self, This, PJsValueArray(Args), Count, Native, JsUndefined);
+    Dec(FRunDepth);
     Exit;
   end;
   if Target is TJsBoundFunction then
-  begin
-    Bound := TJsBoundFunction(Target);
-    BoundCount := Length(Bound.BoundArguments);
-    if BoundCount = 0 then
-      Exit(Call(Bound.Target, Bound.BoundThis, Args, Count));
-    Merged := nil;
-    SetLength(Merged, BoundCount + Count);
-    for Index := 0 to BoundCount - 1 do
-      Merged[Index] := Bound.BoundArguments[Index];
-    for Index := 0 to Count - 1 do
-      Merged[BoundCount + Index] := Args[Index];
-    Exit(Call(Bound.Target, Bound.BoundThis, @Merged[0], Length(Merged)));
-  end;
+    Exit(CallBound(TJsBoundFunction(Target), Args, Count));
   if Target.IsCallable then
     Exit(Target.CallAsFunction(Self, This, Args, Count));
   Result := NotCallable(F);
+end;
+
+function TJsInterpreterRealm.CallBound(Bound: TJsBoundFunction; Args: PJsValue; Count: Integer): TJsValue;
+var
+  Merged: TJsValueList;
+  Index, BoundCount: Integer;
+begin
+  BoundCount := Length(Bound.BoundArguments);
+  if BoundCount = 0 then
+    Exit(Call(Bound.Target, Bound.BoundThis, Args, Count));
+  Merged := nil;
+  SetLength(Merged, BoundCount + Count);
+  for Index := 0 to BoundCount - 1 do
+    Merged[Index] := Bound.BoundArguments[Index];
+  for Index := 0 to Count - 1 do
+    Merged[BoundCount + Index] := Args[Index];
+  Result := Call(Bound.Target, Bound.BoundThis, @Merged[0], Length(Merged));
 end;
 
 function TJsInterpreterRealm.Construct(F: TJsValue; Args: PJsValue; Count: Integer; NewTarget: TJsValue): TJsValue;
 var
   Target: TJsObject;
   Native: TJsNativeFunction;
-  Bound: TJsBoundFunction;
-  Merged: TJsValueList;
-  Index, BoundCount: Integer;
 begin
   if not CanEnter then
     Exit(RefuseEntry);
   if not JsIsConstructor(F) then
-    Exit(ThrowTypeError(ValueToPascal(Self, F) + ' is not a constructor'));
+    Exit(ThrowNamingValue(Self, ekType, '', F, ' is not a constructor'));
   Target := JsAsObject(F);
-  if Target is TJsClosure then
+  if IsClosure(Target) then
   begin
     if IsForeign(TJsClosure(Target).Realm) then
       Exit(TJsClosure(Target).Realm.Construct(F, Args, Count, NewTarget));
     Exit(CallClosure(TJsClosure(Target), JsUndefined, Args, Count, NewTarget, True));
   end;
-  if Target is TJsNativeFunction then
+  if IsNativeFunction(Target) then
   begin
     Native := TJsNativeFunction(Target);
     if IsForeign(Native.Realm) then
@@ -1108,31 +1131,36 @@ begin
     if FRunDepth >= MaximumRunDepth then
       Exit(ThrowRangeError('Maximum call stack size exceeded'));
     Inc(FRunDepth);
-    try
-      if Assigned(Native.Callback) then
-        Result := Native.Callback(Self, JsUndefined, PJsValueArray(Args), Count, Native, NewTarget)
-      else
-        Result := Native.Method(Self, JsUndefined, PJsValueArray(Args), Count, Native, NewTarget);
-    finally
-      Dec(FRunDepth);
-    end;
+    if Assigned(Native.Callback) then
+      Result := Native.Callback(Self, JsUndefined, PJsValueArray(Args), Count, Native, NewTarget)
+    else
+      Result := Native.Method(Self, JsUndefined, PJsValueArray(Args), Count, Native, NewTarget);
+    Dec(FRunDepth);
     Exit;
   end;
   if Target is TJsBoundFunction then
   begin
-    Bound := TJsBoundFunction(Target);
     if NewTarget = F then
-      NewTarget := Bound.Target;
-    BoundCount := Length(Bound.BoundArguments);
-    Merged := nil;
-    SetLength(Merged, BoundCount + Count + 1);
-    for Index := 0 to BoundCount - 1 do
-      Merged[Index] := Bound.BoundArguments[Index];
-    for Index := 0 to Count - 1 do
-      Merged[BoundCount + Index] := Args[Index];
-    Exit(Construct(Bound.Target, @Merged[0], BoundCount + Count, NewTarget));
+      NewTarget := TJsBoundFunction(Target).Target;
+    Exit(ConstructBound(TJsBoundFunction(Target), Args, Count, NewTarget));
   end;
   Result := Target.ConstructAsFunction(Self, Args, Count, NewTarget);
+end;
+
+function TJsInterpreterRealm.ConstructBound(Bound: TJsBoundFunction; Args: PJsValue; Count: Integer;
+  NewTarget: TJsValue): TJsValue;
+var
+  Merged: TJsValueList;
+  Index, BoundCount: Integer;
+begin
+  BoundCount := Length(Bound.BoundArguments);
+  Merged := nil;
+  SetLength(Merged, BoundCount + Count + 1);
+  for Index := 0 to BoundCount - 1 do
+    Merged[Index] := Bound.BoundArguments[Index];
+  for Index := 0 to Count - 1 do
+    Merged[BoundCount + Index] := Args[Index];
+  Result := Construct(Bound.Target, @Merged[0], BoundCount + Count, NewTarget);
 end;
 
 function TJsInterpreterRealm.RunScript(Code: TJsCode): TJsValue;
@@ -1164,9 +1192,78 @@ end;
 
 { Property access }
 
+{ Whether an object of the chain can be cached through: an ordinary
+  prototype whose changes bump the prototype shape epoch. }
+function IsCacheablePrototype(Target: TJsObject): Boolean; inline;
+begin
+  Result := (Target.ObjectFlags and (ObjectExotic or ObjectLazyPrototype or ObjectIsPrototype)) = ObjectIsPrototype;
+end;
+
+function TJsInterpreterRealm.ChainEntryFor(Target: TJsObject; Cache: PJsPropertyCache): PJsPropertyCache;
+var
+  Walk: TJsObject;
+  Steps: Integer;
+begin
+  if Cache^.Shape = Target.Shape then
+    Result := Cache
+  else if Cache^.Extra <> nil then
+    Result := FindCacheEntry(Cache, Target.Shape)
+  else
+    Exit(nil);
+  if (Result = nil) or (Result^.Prototype = nil) or (Result^.Prototype <> Target.Proto) or
+    (Result^.Epoch <> Runtime.PrototypeShapeEpoch) or (Result^.Generation <> Target.Shape.Generation) or
+    (Result^.Holder.Shape <> Result^.NewShape) then
+    Exit(nil);
+  { The links themselves, as some are made directly at setup. }
+  Walk := Result^.Prototype;
+  for Steps := 2 to Result^.Depth do
+  begin
+    Walk := Walk.Proto;
+    if Walk = nil then
+      Exit(nil);
+  end;
+  if Walk <> Result^.Holder then
+    Result := nil;
+end;
+
+procedure TJsInterpreterRealm.FillChainEntry(Target: TJsObject; Key: TJsValue; Cache: PJsPropertyCache);
+var
+  Holder: TJsObject;
+  Depth, Slot: Integer;
+  Flags: Byte;
+begin
+  Holder := Target.Proto;
+  if (Holder = nil) or not IsCacheablePrototype(Holder) or (Holder.Shape.Find(Key, Flags) >= 0) then
+    Exit;
+  Depth := 1;
+  repeat
+    Holder := Holder.Proto;
+    Inc(Depth);
+    if (Holder = nil) or (Depth > High(Byte)) or not IsCacheablePrototype(Holder) then
+      Exit;
+    Slot := Holder.Shape.Find(Key, Flags);
+  until Slot >= 0;
+  Cache := CacheEntryFor(Cache, Target.Shape);
+  Cache^.Shape := Target.Shape;
+  Cache^.Generation := Target.Shape.Generation;
+  Cache^.Slot := Slot;
+  Cache^.Holder := Holder;
+  { Kept apart from HolderShape, which stays nil so that the interpreter's
+    own prototype check never takes this entry (a receiver of the same
+    shape whose prototype is the holder would read an accessor's slot). }
+  Cache^.HolderShape := nil;
+  Cache^.NewShape := Holder.Shape;
+  Cache^.Epoch := Runtime.PrototypeShapeEpoch;
+  Cache^.Depth := Depth;
+  Cache^.HolderAccessor := (Flags and PropertyAccessor) <> 0;
+  Cache^.Prototype := Target.Proto;
+end;
+
 function TJsInterpreterRealm.GetNamedSlow(Base, Key: TJsValue; Cache: PJsPropertyCache): TJsValue;
 var
   Target, Holder: TJsObject;
+  Entry: PJsPropertyCache;
+  Pair: TJsAccessorPair;
   Slot: Integer;
   Flags: Byte;
 begin
@@ -1175,6 +1272,19 @@ begin
     Target := JsAsObject(Base);
     if ((Target.ObjectFlags and (ObjectExotic or ObjectLazyPrototype)) = 0) and (Key <> LengthKey) then
     begin
+      { Found further up the chain before (the interpreter's own check
+        covers the receiver and its prototype). }
+      Entry := ChainEntryFor(Target, Cache);
+      if Entry <> nil then
+      begin
+        Result := Entry^.Holder.GetSlot(Entry^.Slot);
+        if not Entry^.HolderAccessor then
+          Exit;
+        Pair := TJsAccessorPair(JsAsCell(Result));
+        if Pair.Getter = JsUndefined then
+          Exit(JsUndefined);
+        Exit(Call(Pair.Getter, Base, nil, 0));
+      end;
       Slot := Target.Shape.Find(Key, Flags);
       if Slot >= 0 then
       begin
@@ -1185,6 +1295,7 @@ begin
           Cache^.Generation := Target.Shape.Generation;
           Cache^.Slot := Slot;
           Cache^.Holder := nil;
+          Cache^.Prototype := nil;
           Exit(Target.GetSlot(Slot));
         end;
       end
@@ -1205,8 +1316,11 @@ begin
             Cache^.Slot := Slot;
             Cache^.Holder := Holder;
             Cache^.HolderShape := Holder.Shape;
+            Cache^.Prototype := nil;
             Exit(Holder.GetSlot(Slot));
           end;
+          if (Slot < 0) and not JsIsInteger(Key) then
+            FillChainEntry(Target, Key, Cache);
         end;
       end;
     end;
@@ -1266,7 +1380,7 @@ begin
   begin
     if HasException then
       Exit(False);
-    ThrowTypeError('Cannot define property ' + KeyToPascal(Self, Key));
+    ThrowNamingKey(Self, ekType, 'Cannot define property ', Key, '');
     Exit(False);
   end;
   NewShape := Target.Shape;
@@ -1293,7 +1407,7 @@ begin
   begin
     Result := GlobalLexicals.GetSlot(Slot);
     if Result = JsHole then
-      Exit(ThrowReferenceError('Cannot access ''' + KeyToPascal(Self, Key) + ''' before initialization'));
+      Exit(ThrowUninitialized(Key));
     Cache^.Holder := GlobalLexicals;
     Cache^.Shape := GlobalLexicals.Shape;
     Cache^.Generation := GlobalLexicals.Shape.Generation;
@@ -1318,7 +1432,7 @@ begin
   begin
     if ForTypeof then
       Exit(JsUndefined);
-    Exit(ThrowReferenceError(KeyToPascal(Self, Key) + ' is not defined'));
+    Exit(ThrowNamingKey(Self, ekReference, '', Key, ' is not defined'));
   end;
   Result := GlobalObject.GetValue(Self, Key);
 end;
@@ -1333,7 +1447,7 @@ begin
   begin
     if GlobalLexicals.GetSlot(Slot) = JsHole then
     begin
-      ThrowReferenceError('Cannot access ''' + KeyToPascal(Self, Key) + ''' before initialization');
+      ThrowUninitialized(Key);
       Exit(False);
     end;
     if (Flags and PropertyWritable) = 0 then
@@ -1367,7 +1481,7 @@ begin
       Exit(False);
     if Found = 0 then
     begin
-      ThrowReferenceError(KeyToPascal(Self, Key) + ' is not defined');
+      ThrowNamingKey(Self, ekReference, '', Key, ' is not defined');
       Exit(False);
     end;
   end;
@@ -1382,7 +1496,7 @@ var
 begin
   if GlobalLexicals.Shape.Find(Key, Flags) >= 0 then
   begin
-    ThrowError(ekSyntax, 'Identifier ''' + KeyToPascal(Self, Key) + ''' has already been declared');
+    ThrowNamingKey(Self, ekSyntax, 'Identifier ''', Key, ''' has already been declared');
     Exit(False);
   end;
   Found := GlobalObject.GetOwnProperty(Self, Key, Desc);
@@ -1414,7 +1528,7 @@ begin
   if (GlobalLexicals.Shape.Find(Key, Flags) >= 0) or ((GlobalObject.GetOwnProperty(Self, Key, Desc) > 0) and
     ((Desc.Flags and PropertyConfigurable) = 0)) then
   begin
-    ThrowError(ekSyntax, 'Identifier ''' + KeyToPascal(Self, Key) + ''' has already been declared');
+    ThrowNamingKey(Self, ekSyntax, 'Identifier ''', Key, ''' has already been declared');
     Exit(False);
   end;
   if IsConst then
@@ -2002,7 +2116,7 @@ DispatchLoop:
       opLoadHome:
         begin
           Target := Frame^.Callee;
-          if (Target is TJsClosure) and (TJsClosure(Target).HomeObject <> nil) then
+          if IsClosure(Target) and (TJsClosure(Target).HomeObject <> nil) then
             Regs[Code[PC + 1]] := JsObjectValue(TJsClosure(Target).HomeObject)
           else
             Regs[Code[PC + 1]] := JsUndefined;
@@ -2101,6 +2215,8 @@ DispatchLoop:
         end;
       opSetNamed:
         begin
+          { A cached addition skips prototypes: theirs go the slow way, which
+            bumps the prototype shape epoch. }
           A := Regs[Code[PC + 1]];
           Cache := @CodeObject.Caches[Code[PC + 4]];
           if JsIsObject(A) then
@@ -2117,7 +2233,7 @@ DispatchLoop:
                   Continue;
                 end;
               end
-              else if (Cache^.Epoch = Runtime.PrototypeEpoch) and ((Target.ObjectFlags and ObjectExtensible) <> 0) then
+              else if (Cache^.Epoch = Runtime.PrototypeEpoch) and ((Target.ObjectFlags and (ObjectExtensible or ObjectIsPrototype)) = ObjectExtensible) then
               begin
                 Target.EnsureSlotCapacity(Self, Cache^.Slot + 1);
                 Target.Shape := Cache^.NewShape;
@@ -2140,7 +2256,7 @@ DispatchLoop:
                     Continue;
                   end;
                 end
-                else if (Entry^.Epoch = Runtime.PrototypeEpoch) and ((Target.ObjectFlags and ObjectExtensible) <> 0) then
+                else if (Entry^.Epoch = Runtime.PrototypeEpoch) and ((Target.ObjectFlags and (ObjectExtensible or ObjectIsPrototype)) = ObjectExtensible) then
                 begin
                   Target.EnsureSlotCapacity(Self, Entry^.Slot + 1);
                   Target.Shape := Entry^.NewShape;
@@ -2283,7 +2399,7 @@ DispatchLoop:
           Target := JsAsObject(Regs[Code[PC + 1]]);
           Cache := @CodeObject.Caches[Code[PC + 4]];
           if (Target.Shape = Cache^.Shape) and (Cache^.NewShape <> nil) and
-            ((Target.ObjectFlags and ObjectExtensible) <> 0) then
+            ((Target.ObjectFlags and (ObjectExtensible or ObjectIsPrototype)) = ObjectExtensible) then
           begin
             Target.EnsureSlotCapacity(Self, Cache^.Slot + 1);
             Target.Shape := Cache^.NewShape;
@@ -2522,7 +2638,7 @@ DispatchLoop:
       opRunClassFields:
         begin
           Value := Regs[Code[PC + 2]];
-          if JsIsObject(Value) and (JsAsObject(Value) is TJsClosure) and
+          if JsIsObject(Value) and IsClosure(JsAsObject(Value)) and
             JsIsCallable(TJsClosure(JsAsObject(Value)).FieldInitializer) then
           begin
             if Call(TJsClosure(JsAsObject(Value)).FieldInitializer, Regs[Code[PC + 1]], nil, 0) = JsException then
@@ -2979,7 +3095,7 @@ DispatchLoop:
           if JsIsObject(Callee) then
           begin
             Target := JsAsObject(Callee);
-            if (Target is TJsClosure) and ((TJsClosure(Target).Code.Flags and
+            if IsClosure(Target) and ((TJsClosure(Target).Code.Flags and
               (CodeGenerator or CodeAsync or CodeClassConstructor)) = 0) and
               not IsForeign(TJsClosure(Target).Realm) then
             begin
@@ -2997,7 +3113,7 @@ DispatchLoop:
                   goto Unwind;
               goto ReloadFrame;
             end;
-            if (Target is TJsNativeFunction) and not IsForeign(TJsNativeFunction(Target).Realm) then
+            if IsNativeFunction(Target) and not IsForeign(TJsNativeFunction(Target).Realm) then
             begin
               Native := TJsNativeFunction(Target);
               Inc(FRunDepth);
@@ -3045,7 +3161,7 @@ DispatchLoop:
           Index := Code[PC + 2];
           Callee := Regs[Index];
           Count := Code[PC + 3];
-          if JsIsObject(Callee) and (JsAsObject(Callee) is TJsClosure) and
+          if JsIsObject(Callee) and IsClosure(JsAsObject(Callee)) and
             ((TJsClosure(JsAsObject(Callee)).Code.Flags and (CodeConstructor or CodeDerivedConstructor or
             CodeGenerator or CodeAsync)) = CodeConstructor) and JsIsConstructor(Callee) and
             not IsForeign(TJsClosure(JsAsObject(Callee)).Realm) then

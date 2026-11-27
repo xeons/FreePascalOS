@@ -66,12 +66,13 @@ type
     FLeft: TJsString;
     FRight: TJsString;
     procedure ComputeIndex;
+    procedure FlattenRope(Heap: TJsHeap);
   public
     destructor Destroy; override;
     procedure Trace(Tracer: TJsTracer); override;
     function MemorySize: SizeInt; override;
     { Makes the characters one buffer (a rope's first look). }
-    procedure Flatten(Heap: TJsHeap);
+    procedure Flatten(Heap: TJsHeap); inline;
     function Hash: LongWord;
     { The array index this string names, if it is one (below 2^32 - 1). }
     function ArrayIndex(out Index: LongWord): Boolean;
@@ -212,6 +213,14 @@ begin
 end;
 
 procedure TJsString.Flatten(Heap: TJsHeap);
+begin
+  if (FFlags and StringFlagRope) <> 0 then
+    FlattenRope(Heap);
+end;
+
+{ Apart from Flatten so that flat strings, nearly every call, skip
+  setting up and freeing the stack. }
+procedure TJsString.FlattenRope(Heap: TJsHeap);
 var
   Stack: array of TJsString;
   StackCount: Integer;
@@ -222,8 +231,6 @@ var
   Target8: PByte;
   Target16: PWord;
 begin
-  if (FFlags and StringFlagRope) = 0 then
-    Exit;
   Wide := (FFlags and StringFlagWide) <> 0;
   if Wide then
     Bytes := FLength * 2
@@ -446,31 +453,27 @@ begin
   Result := Count;
 end;
 
-function NewStringFromUtf8(Heap: TJsHeap; const Text: string): TJsString;
+function NewStringFromNonAsciiUtf8(Heap: TJsHeap; const Text: string): TJsString;
 var
-  Index: Integer;
-  Ascii: Boolean;
   Units: array of Word;
   Count: Integer;
 begin
-  Ascii := True;
-  for Index := 1 to System.Length(Text) do
-    if Byte(Text[Index]) >= $80 then
-    begin
-      Ascii := False;
-      Break;
-    end;
-  if Ascii then
-  begin
-    Result := NewBlankString(Heap, System.Length(Text), False);
-    if Text <> '' then
-      Move(Text[1], Result.FData^, System.Length(Text));
-    Exit;
-  end;
   Units := nil;
   SetLength(Units, System.Length(Text) + 1);
   Count := DecodeUtf8(Text, Units);
   Result := NewUtf16String(Heap, @Units[0], Count);
+end;
+
+function NewStringFromUtf8(Heap: TJsHeap; const Text: string): TJsString;
+var
+  Index: Integer;
+begin
+  for Index := 1 to System.Length(Text) do
+    if Byte(Text[Index]) >= $80 then
+      Exit(NewStringFromNonAsciiUtf8(Heap, Text));
+  Result := NewBlankString(Heap, System.Length(Text), False);
+  if Text <> '' then
+    Move(Text[1], Result.FData^, System.Length(Text));
 end;
 
 function ConcatStrings(Heap: TJsHeap; First, Second: TJsString): TJsString;

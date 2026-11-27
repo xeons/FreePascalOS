@@ -229,6 +229,10 @@ type
   TJsObjectClassType = class of TJsObject;
 
   TJsArray = class(TJsObject)
+  private
+    { The indices from NewLength on kept by name, deleted from the
+      last; False (the length stopped above it) when one cannot go. }
+    function DeleteNamedIndices(R: TJsRealm; NewLength: LongWord): Boolean;
   public
     ArrayLength: LongWord;
     { The length set by assignment or defineProperty. }
@@ -613,10 +617,20 @@ begin
   SetSlot(Slot, Value);
   if JsIsInteger(Key) then
     ObjectFlags := ObjectFlags or ObjectIndexedByName;
-  if ((ObjectFlags and ObjectIsPrototype) <> 0) and
-    ((PropertyFlags and (PropertyAccessor or PropertyWritable)) <> PropertyWritable) then
-    Inc(R.Runtime.PrototypeEpoch);
+  if (ObjectFlags and ObjectIsPrototype) <> 0 then
+  begin
+    Inc(R.Runtime.PrototypeShapeEpoch);
+    if (PropertyFlags and (PropertyAccessor or PropertyWritable)) <> PropertyWritable then
+      Inc(R.Runtime.PrototypeEpoch);
+  end;
   Result := True;
+end;
+
+{ The atom of an index past the integer keys: apart from its callers,
+  which then need no text of their own (an exception frame each). }
+function IndexName(R: TJsRealm; Index: LongWord): TJsValue;
+begin
+  Result := R.Runtime.Intern(IntToStr(Index));
 end;
 
 { Stores a new element at Index (no property there yet): dense when it
@@ -641,7 +655,7 @@ begin
     Exit(True);
   end;
   if Index > 2147483646 then
-    Result := AddNamed(R, R.Runtime.Intern(IntToStr(Index)), PropertyDefault, Value)
+    Result := AddNamed(R, IndexName(R, Index), PropertyDefault, Value)
   else
     Result := AddNamed(R, JsInteger(LongInt(Index)), PropertyDefault, Value);
 end;
@@ -780,7 +794,10 @@ begin
     MakeDictionary(R);
     DictionarySetFlags(Shape, Key, NewFlags);
     if ((ObjectFlags and ObjectIsPrototype) <> 0) then
+    begin
       Inc(R.Runtime.PrototypeEpoch);
+      Inc(R.Runtime.PrototypeShapeEpoch);
+    end;
   end;
   if ToAccessor then
   begin
@@ -1283,6 +1300,8 @@ begin
   MakeDictionary(R);
   SetSlot(Slot, JsUndefined);
   DictionaryRemove(R.Heap, Shape, Key);
+  if (ObjectFlags and ObjectIsPrototype) <> 0 then
+    Inc(R.Runtime.PrototypeShapeEpoch);
   Result := 1;
 end;
 
@@ -1367,6 +1386,7 @@ begin
   if Prototype <> nil then
     R.NoteIsPrototype(Prototype);
   Inc(R.Runtime.PrototypeEpoch);
+  Inc(R.Runtime.PrototypeShapeEpoch);
   Result := 1;
 end;
 
@@ -1432,9 +1452,6 @@ end;
 function TJsArray.SetLength(R: TJsRealm; NewLength: LongWord): Boolean;
 var
   Index: Integer;
-  Keys: TJsValueList;
-  Entries: TJsShapeEntryList;
-  Key: TJsValue;
 begin
   Result := True;
   if NewLength < LongWord(ElementCount) then
@@ -1450,23 +1467,31 @@ begin
     ElementCount := Integer(NewLength);
   end;
   if ((ObjectFlags and ObjectIndexedByName) <> 0) and (NewLength < ArrayLength) then
+    if not DeleteNamedIndices(R, NewLength) then
+      Exit(False);
+  ArrayLength := NewLength;
+end;
+
+function TJsArray.DeleteNamedIndices(R: TJsRealm; NewLength: LongWord): Boolean;
+var
+  Index: Integer;
+  Entries: TJsShapeEntryList;
+  Key: TJsValue;
+begin
+  Entries := Shape.Entries;
+  for Index := High(Entries) downto 0 do
   begin
-    Entries := Shape.Entries;
-    Keys := nil;
-    for Index := High(Entries) downto 0 do
+    Key := Entries[Index].Key;
+    if JsIsInteger(Key) and (LongWord(JsAsInteger(Key)) >= NewLength) then
     begin
-      Key := Entries[Index].Key;
-      if JsIsInteger(Key) and (LongWord(JsAsInteger(Key)) >= NewLength) then
+      if DeleteProperty(R, Key) = 0 then
       begin
-        if DeleteProperty(R, Key) = 0 then
-        begin
-          ArrayLength := LongWord(JsAsInteger(Key)) + 1;
-          Exit(False);
-        end;
+        ArrayLength := LongWord(JsAsInteger(Key)) + 1;
+        Exit(False);
       end;
     end;
   end;
-  ArrayLength := NewLength;
+  Result := True;
 end;
 
 function TJsArray.OwnPropertyKeys(R: TJsRealm; Filter: Integer; out Keys: TJsValueList): Boolean;

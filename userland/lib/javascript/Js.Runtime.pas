@@ -71,6 +71,10 @@ type
       an object's prototype changes: caches of property additions that
       assumed no setter on the chain compare it. }
     PrototypeEpoch: LongWord;
+    { Bumped when an object marked as a prototype gains, loses or
+      changes a named property, or an object's prototype changes:
+      caches of properties found deeper on a prototype chain compare it. }
+    PrototypeShapeEpoch: LongWord;
     constructor Create;
     destructor Destroy; override;
     function PushRoot(Value: TJsValue): Integer;
