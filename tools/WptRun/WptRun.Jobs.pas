@@ -22,7 +22,9 @@
   the engine costs only itself. The session ends when the harness
   reports; a session that outlives its time (testharness.js's own
   timeout, 10 s or 60 s for timeout=long, and some slack) is killed and
-  the test is an EXTERNAL-TIMEOUT.
+  the test is an EXTERNAL-TIMEOUT. A reftest's child (wptrun --reftest,
+  WptRun.ReftestChild) renders the test and its references one after
+  another and reports like the harness; it has its time per page.
 }
 unit WptRun.Jobs;
 
@@ -44,6 +46,13 @@ type
     FontDirectory: string;
     { Scales every time limit (a slow host). }
     TimeoutMultiplier: Double;
+    { The checkout (reftests read their references' links from it). }
+    WptRoot: string;
+    { Where reftests leave the screenshots of failures (one directory
+      per test). }
+    ShotDirectory: string;
+    { Families installed for the tests (Ahem, as wptrunner installs it). }
+    UserFontDirectory: string;
   end;
 
   TResultEvent = procedure(constref Outcome: TTestResult; const Output: string) of object;
@@ -85,9 +94,20 @@ begin
   Result := Double(Spec.tv_sec) * 1000 + Double(Spec.tv_nsec) / 1000000;
 end;
 
-function SessionSeconds(constref Test: TWptTest; Multiplier: Double): Double;
+{ The time a reftest's page has to load and settle. }
+function ReftestPageSeconds(constref Test: TWptTest; Multiplier: Double): Double;
 begin
   if Test.LongTimeout then
+    Result := 30 * Multiplier
+  else
+    Result := 10 * Multiplier;
+end;
+
+function SessionSeconds(constref Test: TWptTest; Multiplier: Double): Double;
+begin
+  if Test.Reftest then
+    Result := ReftestPageSeconds(Test, Multiplier) * Test.PageCount
+  else if Test.LongTimeout then
     Result := 75 * Multiplier
   else
     Result := 20 * Multiplier;
@@ -116,6 +136,19 @@ begin
   end;
 end;
 
+{ The test's own directory for screenshots ("/css/a.html?x": css_a.html_x). }
+function ShotDirectoryOf(constref Test: TWptTest; const Root: string): string;
+var
+  Name: string;
+  Index: Integer;
+begin
+  Name := Copy(Test.Path, 2, MaxInt);
+  for Index := 1 to Length(Name) do
+    if not (Name[Index] in ['A'..'Z', 'a'..'z', '0'..'9', '.', '-', '_']) then
+      Name[Index] := '_';
+  Result := IncludeTrailingPathDelimiter(Root) + Name;
+end;
+
 procedure StartTest(var Running: TRunningTest; constref Test: TWptTest; constref Settings: TRunSettings);
 begin
   Running.Test := Test;
@@ -123,16 +156,37 @@ begin
   Running.Started := NowMilliseconds;
   Running.Process := TProcess.Create(nil);
   Running.Process.Executable := Settings.Executable;
-  Running.Process.Parameters.Add('--child');
-  Running.Process.Parameters.Add(TestUrl(Test));
-  Running.Process.Parameters.Add('--seconds');
-  Running.Process.Parameters.Add(FloatToStr(SessionSeconds(Test, Settings.TimeoutMultiplier)));
+  if Test.Reftest then
+  begin
+    Running.Process.Parameters.Add('--reftest');
+    Running.Process.Parameters.Add(Test.Path);
+    Running.Process.Parameters.Add('--wpt');
+    Running.Process.Parameters.Add(Settings.WptRoot);
+    Running.Process.Parameters.Add('--base');
+    Running.Process.Parameters.Add('http://' + TestHost + ':' + IntToStr(WptHttpPort));
+    Running.Process.Parameters.Add('--shots');
+    Running.Process.Parameters.Add(ShotDirectoryOf(Test, Settings.ShotDirectory));
+    Running.Process.Parameters.Add('--seconds');
+    Running.Process.Parameters.Add(FloatToStr(ReftestPageSeconds(Test, Settings.TimeoutMultiplier)));
+  end
+  else
+  begin
+    Running.Process.Parameters.Add('--child');
+    Running.Process.Parameters.Add(TestUrl(Test));
+    Running.Process.Parameters.Add('--seconds');
+    Running.Process.Parameters.Add(FloatToStr(SessionSeconds(Test, Settings.TimeoutMultiplier)));
+  end;
   Running.Process.Parameters.Add('--trust-ca');
   Running.Process.Parameters.Add(Settings.CertificateFile);
   if Settings.FontDirectory <> '' then
   begin
     Running.Process.Parameters.Add('-f');
     Running.Process.Parameters.Add(Settings.FontDirectory);
+  end;
+  if Settings.UserFontDirectory <> '' then
+  begin
+    Running.Process.Parameters.Add('--user-fonts');
+    Running.Process.Parameters.Add(Settings.UserFontDirectory);
   end;
   Running.Process.Options := [poUsePipes, poStderrToOutPut];
   Running.Process.Execute;
@@ -154,6 +208,7 @@ begin
     end;
   end;
   Outcome.Milliseconds := NowMilliseconds - Running.Started;
+  Outcome.Reftest := Running.Test.Reftest;
   OnResult(Outcome, Running.Output);
   FreeAndNil(Running.Process);
 end;

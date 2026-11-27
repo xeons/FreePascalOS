@@ -16328,7 +16328,8 @@ file are trusted beside the host's roots (WPT's
 `tools/certs/cacert.pem`; the TLS server name stays the test domain,
 so certificate checks run as for a real site).
 
-**Tests** are found the way WPT's manifest names them: `.html`,
+**Tests** are found the way WPT's manifest names them (reftests
+below): `.html`,
 `.htm`, `.xhtml`, `.xht` and `.svg` files that load
 `/resources/testharness.js`; `x.any.js` once per global of its
 `// META: global=` (window and dedicatedworker by default: `.any.html`,
@@ -16371,6 +16372,103 @@ tests. `make wpt` runs `tools/WptRun/curated.txt` (the HTML and
 JavaScript API directories); `make wpt WPT_TESTS=dom/nodes
 WPT_FLAGS=--list` runs others. Pass rates and the main gaps are kept
 in TODO.md.
+
+**Reftests.** A markup file without testharness.js that links to a
+reference (`<link rel=match href>` or `rel=mismatch`; not named or
+placed as a reference, not a CSS manual test by its `<meta name=flags>`)
+is a reftest (`WptRun.Reftests` reads the graph as WPT's manifest does:
+the match links first, hrefs resolved against the page,
+`<meta name=fuzzy content="[REF:]maxDifference=A-B;totalPixels=C-D">`
+allowances with or without the names, `<meta name=viewport-size>`). Its
+child is `wptrun --reftest PATH` (`WptRun.ReftestChild`, under the same
+caps): each page of the graph is rendered once by a webbrowse session of
+its own at 800x600 and scale 1 (`TBrowseOptions.ReftestWait`: after the
+load and a quiet page, a bubbling `TestRendered` event at the root, and
+the page held while the root's class has `reftest-wait`) into a PNG,
+then compared as wptrunner's RefTestImplementation does: a depth-first
+walk of the links, a pair passing when the screenshots are equal (the
+red, green and blue of every pixel; `WptRun.PixelDifference`) or within
+the left page's allowance for that reference, a mismatch when they are
+not; a reference with links of its own continues the chain, one without
+ends it with a pass, and the test fails when every path fails. The child
+prints the harness report with status OK, FAIL (a new harness status,
+recorded as `!harness FAIL` in the expectations), ERROR or TIMEOUT, so
+results, expectations and the report treat reftests like other tests
+(the report has a reftest column). A page has 10 s (30 s for
+timeout=long) and the child the pages of its graph times that. The
+screenshots of a failing test stay in `build/wpt/reftest-shots/TEST/`
+(`--shots DIR` for a second run at the same time); a passing test's are
+removed. As wptrunner installs Ahem as a system font, wptrun copies the
+checkout's `fonts/Ahem.ttf` to `build/wpt/fonts/ahem/` and its children
+use it as a user font directory (`WebUserFontDirectory`, webbrowse
+`--user-fonts DIR`).
+
+`tools/WptRun/layout.txt` lists the CSS box model and layout directories
+(CSS2 normal-flow, margin-padding-clear, box-display, positioning,
+floats, floats-clear, visudet, visuren, linebox, tables, borders,
+backgrounds, text, zindex, abspos; css-box, css-sizing, css-display,
+css-position, css-flexbox, css-grid, css-tables, css-inline, css-text,
+css-values, css-backgrounds, css-overflow; the horizontal tests of
+css-writing-modes, since vertical writing modes are not laid out):
+`make wpt WPT_TESTS=@tools/WptRun/layout.txt` (15037 tests, about 25
+minutes at 8 jobs). Their rates and the work they led to are in TODO.md.
+
+#### Validating layout against the test suite and Gecko
+
+The layout work that followed the first reftest run compared failures
+with Firefox's source (mozilla-firefox, layout/; read for behaviour
+only, nothing copied) where the specifications leave room:
+
+- **Device pixel snapping.** Gecko paints backgrounds, borders and
+  clips at rectangles snapped to device pixels (NSRectToSnappedRect,
+  WebRender's snapping) and computes border widths as whole device
+  pixels (NS_ROUND_BORDER_TO_PIXELS, which libcss's SnapBorderWidth
+  already did). Our square backgrounds were snapped but borders and
+  rounded boxes were drawn at fractional edges, so a box below a line of
+  normal line-height (y 50.4) bled anti-aliased edges: borders and
+  rounded backgrounds now snap their border box like square ones.
+- **XHTML.** Gecko parses application/xhtml+xml with its XML parser;
+  ours went through the HTML parser, so the CDATA sections of about
+  2000 CSS2 style sheets were text in the sheet and the UTF-8 text
+  decoded as windows-1252. `Web.Xml.Parser` now keeps its open elements
+  on a stack and pauses after a script element's end tag
+  (`TXmlDocumentParser.OnScriptEnd`, HTML's "pause" for a pending
+  parsing-blocking script); the loader resumes it when the script has
+  run (`TScriptScheduler.XmlScriptEndTagReached`), so inline scripts see
+  the tree so far and external ones block as in HTML. A prefixed SVG
+  element (`svg:svg`) is SVG (`TElement.IsSvg` looks at the namespace of
+  the namespace-and-prefix id).
+- **The initial containing block.** As in Gecko's viewport and canvas
+  frames, absolutely positioned boxes without a positioned ancestor are
+  placed in the viewport-sized rectangle at the canvas origin, not the
+  root element's box.
+- **Tables** (nsTableFrame, FixedTableLayoutStrategy, the BC border
+  code): misparented table parts get anonymous tables (CSS 2.2 17.2.1,
+  as nsCSSFrameConstructor's pseudo-frame creation does); the fixed
+  table layout takes column widths from the column elements and the
+  first row's cells only (lengths, percentages with padding and border,
+  spans shared out, percentage columns giving back when too wide, the
+  rest to auto columns, else to length columns, else to percentage
+  ones), and applies only when the table's width is not auto
+  (nsTableFrame::IsAutoLayout); `border-collapse: collapse` resolves
+  one border per grid edge segment (hidden, none, width, style, cell >
+  row > row group > column > column group > table, earlier wins),
+  splits each across its line as Gecko does (the larger half above and
+  left: BC_BORDER_START_HALF / END_HALF), gives cells and the table
+  those halves as used borders (no table padding) and paints the edges
+  from the table over its cells' backgrounds
+  (`Web.Layout.TableBorders`, `Web.Paint.Builder`'s
+  PaintCollapsedBorders). Absolutely positioned table parts reach their
+  containing block.
+- **Floats** (BlockReflowState's float avoidance): a box with a
+  formatting context of its own must fit beside the floats over its
+  whole height; where its margin box does not, it moves down past the
+  next float bottom and tries again.
+- **aspect-ratio** (nsIFrame::ComputeSize's ratio transfer): an auto
+  height from the width (definite for percentages inside, never less
+  than the content with min-height auto and visible overflow), an auto
+  width from a definite height, absolutely positioned boxes included.
+
 ### IndexedDB, the Cache API and navigator.storage
 
 Pages keep structured data in **IndexedDB** (Indexed Database API 3.0),
@@ -17365,9 +17463,8 @@ page after loading and after the steps.
 ### Not done yet (layout and painting)
 
 Grid's subgrid, dense packing, baseline alignment, named lines and the
-full intrinsic track sizing algorithm, the fixed table
-layout and collapsing borders (laid out as separate borders without
-spacing), multi-column layout, writing modes and bidirectional text
+full intrinsic track sizing algorithm, collapsed borders in styles
+other than solid and double (drawn solid), multi-column layout, writing modes and bidirectional text
 (rtl only flips text-align), shaping beyond kerning (ligatures, complex
 scripts: Arabic draws unjoined), emoji ZWJ sequences and flags (their
 parts draw one by one), a collection's face chosen by language (its

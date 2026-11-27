@@ -2044,6 +2044,45 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       41.2%, shadow-dom 24.1 -> 92.8%, custom-elements 73.3 -> 76.7%,
       selection 97.2%, WebCryptoAPI 2.0%, compression 0.8 -> 32.7%,
       wasm 0.8% -> 99.6% of 138458 (381 of 535 tests) with libwasm merged
+- [x] WPT reftests in tools/WptRun (rendered at 800x600 by webbrowse
+      children under the same caps, compared as wptrunner does: chained
+      references, fuzzy allowances, reftest-wait, Ahem installed as a
+      user font) and the CSS layout set `tools/WptRun/layout.txt` (15037
+      tests; css-writing-modes only its 107 horizontal tests). Reftests
+      passing went from 3460 to 6282 of 12139 (28.5% -> 51.8%), subtests
+      from 41.6% to 46.3%. Reftests passing per directory, baseline ->
+      now: CSS2 margin-padding-clear 2.2 -> 91.5%, positioning 9.2 ->
+      75.2%, tables 28.7 -> 83.4%, floats-clear 12.6 -> 76.6%, floats 46.0
+      -> 68.5%, linebox 12.6 -> 79.6%, normal-flow 48.3 -> 84.1%, borders
+      31.2 -> 77.7%, backgrounds 42.3 -> 86.6%, box-display 36.7 ->
+      78.3%, text 63.0 -> 69.5%, visudet 42.1 -> 50.0%, visuren 50.0 ->
+      67.6%, zindex 22.6 -> 83.9%, abspos 44.8 -> 79.3%; css-tables 39.0
+      -> 65.1%, css-position 31.0 -> 40.1%, css-sizing 22.5 -> 35.6%,
+      css-display 33.3 -> 52.9%, css-flexbox 41.7 -> 59.5%, css-grid 19.3
+      -> 27.0%, css-backgrounds 47.7 -> 52.3%, css-values 32.4 -> 44.6%,
+      css-text 25.8 -> 27.0%, css-overflow 24.0 -> 26.0%, css-inline 21.7
+      -> 21.9%, css-box 0 -> 4.8%, css-writing-modes 2.9%. The fixes:
+      XHTML through the XML parser (CDATA style sheets, UTF-8), borders
+      snapped to device pixels, prefixed SVG elements, the initial
+      containing block, anonymous tables, table-layout: fixed,
+      border-collapse, formatting contexts beside floats, aspect-ratio
+      (docs/Architecture.md "Validating layout against the test suite
+      and Gecko")
+- [ ] Layout gaps the reftests show, by failing tests: css-grid (1300
+      reftests: subgrid, baseline alignment, abspos in grid, intrinsic
+      track sizing, alignment); css-text (1190: text-transform,
+      hyphenation, white-space and line breaking details, tab-size,
+      text-indent, letter/word spacing); css-overflow (line-clamp
+      standard property, scroll markers, text-overflow strings,
+      overflow-clip-margin); css-inline (text-box-trim, initial-letter,
+      alignment-baseline, baseline-source); css-sizing (aspect-ratio for
+      replaced and flex/grid items, stretch, contain-intrinsic-size,
+      intrinsic percentages of replaced elements); css-flexbox (abspos
+      children, intrinsic sizes, aspect-ratio items, percentage
+      heights); css-box margin-trim; block-in-inline splitting (CSS2
+      normal-flow block-in-inline-*); collapsed borders in dashed,
+      dotted, inset and outset styles (drawn solid) and corner ownership;
+      vertical writing modes (css-writing-modes, CSS2 floats vertical)
 - [ ] WPT gaps, by size: legacy encoders (GBK, Big5, Shift_JIS,
       EUC-KR ... for form submission and URLs in legacy-encoded
       documents; only decoders exist); SubtleCrypto beyond digest
@@ -2053,8 +2092,10 @@ Script bindings (`Web.Bindings*`, `Web.Script*`):
       scripts throw are the window's TypeErrors (instanceof fails in
       .worker, .sharedworker and .serviceworker variants); streams per
       the Streams Standard (BYOB readers, tee, pipeTo options, queuing
-      strategies, byte streams); XHTML through the XML parser (it runs no
-      scripts yet, so XHTML still goes through the HTML parser);
+      strategies, byte streams); in XHTML documents innerHTML and
+      insertAdjacentHTML still serialize and parse as HTML (not XML),
+      the XML parser does not put template contents in their fragment,
+      and :link/:target differ (dom/nodes, domparsing xhtml tests);
       CharacterData with lone surrogates (DOM strings are UTF-8);
       importing a module from a blob: URL; the bfcache and
       origin-keyed agent clusters (html/browsers); window named

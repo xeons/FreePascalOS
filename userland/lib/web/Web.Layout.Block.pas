@@ -180,6 +180,40 @@ begin
   Child.Y := PlacedY - Input.BfcY + Child.Margin[sideTop];
 end;
 
+{ An auto height without an aspect ratio: the content's. }
+function HeightFromContent(Style: TCssComputedStyle): Boolean;
+var
+  Ratio: Double;
+begin
+  Result := IsAutoValue(Style, cpHeight) and not PreferredAspectRatio(Style, Ratio);
+end;
+
+const
+  { Tries of a box beside floats before it is left where it is. }
+  MostFloatMoves = 64;
+
+{ Whether Child, laid out at ChildY (in Box's content) moved by Shift,
+  fits beside the floats over its whole height: its margin box within
+  the band they leave, starting where that band starts. }
+function BesideFloats(Box, Child: TLayoutBox; const Input: TLayoutInput; ChildY, ContentWidth,
+  Shift: Single): Boolean;
+var
+  Origin, BandLeft, BandRight, MarginWidth: Single;
+begin
+  Result := True;
+  Origin := Input.BfcX + Box.ContentLeft;
+  if not Input.Floats.FreeBand(Input.BfcY + Box.ContentTop + ChildY, Child.Height, Origin, Origin + ContentWidth,
+    BandLeft, BandRight) then
+    Exit;
+  { A width of its own, else the width it took in the band. }
+  MarginWidth := SpecifiedBorderBoxWidth(Child, ContentWidth);
+  if MarginWidth < 0 then
+    MarginWidth := Child.Width;
+  MarginWidth := MarginWidth + LengthOf(Child.Style, cpMarginLeft, ContentWidth) +
+    LengthOf(Child.Style, cpMarginRight, ContentWidth);
+  Result := (MarginWidth <= BandRight - BandLeft + 0.01) and (Shift >= BandLeft - Origin - 0.01);
+end;
+
 procedure LayoutBlockChildren(Box: TLayoutBox; const Input: TLayoutInput; ContentWidth, ContentHeight: Single;
   out UsedContentHeight: Single);
 var
@@ -189,12 +223,13 @@ var
   Pending, ParentTop, Combined: TMarginStrut;
   CollapseTop, CollapseBottom, FirstInFlow, Cleared, NewContext: Boolean;
   Clear: TCssKeyword;
-  Attempt, FloatsBefore: Integer;
+  Attempt, FloatsBefore, Moves: Integer;
+  Fits: Boolean;
 begin
   CollapseTop := not (bfNewFormattingContext in Box.Flags) and (Box.Border[sideTop] = 0) and
     (Box.Padding[sideTop] = 0) and (Box.Kind <> bkViewport);
   CollapseBottom := not (bfNewFormattingContext in Box.Flags) and (Box.Border[sideBottom] = 0) and
-    (Box.Padding[sideBottom] = 0) and IsAutoValue(Box.Style, cpHeight) and (Box.Kind <> bkViewport);
+    (Box.Padding[sideBottom] = 0) and HeightFromContent(Box.Style) and (Box.Kind <> bkViewport);
   ParentTop := EmptyStrut;
   AddMargin(ParentTop, Box.Margin[sideTop]);
   Pending := EmptyStrut;
@@ -260,6 +295,7 @@ begin
     end;
     NewContext := (bfNewFormattingContext in Child.Flags) or (Child.Kind = bkReplaced);
     Attempt := 0;
+    Moves := 0;
     FloatsBefore := Input.Floats.Count;
     repeat
       Input.Floats.Truncate(FloatsBefore);
@@ -306,6 +342,28 @@ begin
         ChildY := Y + Resolve(Combined);
       ChildY := ChildY + Child.LeadingOffset;
       Inc(Attempt);
+      { A box with a formatting context of its own must not overlap the
+        floats anywhere along its height (CSS 2.2 9.5): where its margin
+        box does not fit beside them, it moves down past the next float
+        bottom and tries again. }
+      if NewContext and (Input.Floats.Count > 0) and (Moves < MostFloatMoves) then
+      begin
+        Fits := BesideFloats(Box, Child, Input, ChildY, ContentWidth, Shift);
+        if not Fits then
+        begin
+          Estimate := Input.Floats.NextBottomWithin(Input.BfcY + Box.ContentTop + ChildY, Child.Height) -
+            Input.BfcY - Box.ContentTop;
+          if Estimate > ChildY + 0.01 then
+          begin
+            Inc(Moves);
+            Cleared := True;
+            ClearY := Estimate;
+            Attempt := 0;
+            Child.MarkNeedsLayout;
+            Continue;
+          end;
+        end;
+      end;
       if (Abs(ChildY - Estimate) < 0.01) or (Input.Floats.Count = 0) or (Attempt >= 2) or
          (bfNewFormattingContext in Child.Flags) and not NewContext then
         Break;
@@ -461,7 +519,7 @@ begin
         ClampLines(Box, LineClampOf(Box.Style), ContentHeight);
       ApplyTextOverflow(Box);
       SetOwnMargins(Box);
-      if (ContentHeight = 0) and (Box.Inline.LineCount = 0) and IsAutoValue(Box.Style, cpHeight) and
+      if (ContentHeight = 0) and (Box.Inline.LineCount = 0) and HeightFromContent(Box.Style) and
          (VerticalBorderPadding(Box) = 0) and not (bfNewFormattingContext in Box.Flags) and
          (MinBorderBoxHeight(Box, Input.ContainingHeight) <= 0) then
       begin

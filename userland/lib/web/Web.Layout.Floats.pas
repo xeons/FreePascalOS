@@ -61,6 +61,10 @@ type
     { The first float bottom below Y within the band (to move down past),
       or Y when none. }
     function NextBottomBelow(Y, LeftLimit, RightLimit: Single): Single;
+    { The first float bottom below Top of the floats between Top and
+      Top + Height (where a box that does not fit beside them tries
+      next), or Top when none. }
+    function NextBottomWithin(Top, Height: Single): Single;
     function LowestBottom: Single;
     property Count: Integer read FCount;
   end;
@@ -135,6 +139,26 @@ begin
       Best := FFloats[Index].Y + FFloats[Index].Height;
   if Best >= 1e30 then
     Result := Y
+  else
+    Result := Best;
+end;
+
+function TFloatContext.NextBottomWithin(Top, Height: Single): Single;
+var
+  Index: Integer;
+  Best, Bottom: Single;
+begin
+  Best := 1e30;
+  if Height < 1 then
+    Height := 1;
+  for Index := 0 to FCount - 1 do
+  begin
+    Bottom := FFloats[Index].Y + FFloats[Index].Height;
+    if (FFloats[Index].Height > 0) and (FFloats[Index].Y < Top + Height) and (Bottom > Top) and (Bottom < Best) then
+      Best := Bottom;
+  end;
+  if Best >= 1e30 then
+    Result := Top
   else
     Result := Best;
 end;

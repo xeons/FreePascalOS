@@ -129,10 +129,10 @@ var
   Parent: TElement;
 begin
   Result := False;
-  if (Element.NamespaceId <> NamespaceSvg) or (NameOfAtom(Element.LocalNameAtom) <> 'svg') then
+  if (not Element.IsSvg) or (NameOfAtom(Element.LocalNameAtom) <> 'svg') then
     Exit;
   Parent := Element.ParentElement;
-  Result := (Parent = nil) or (Parent.NamespaceId <> NamespaceSvg);
+  Result := (Parent = nil) or (not Parent.IsSvg);
 end;
 
 { ---- copying the DOM ---- }
@@ -166,7 +166,7 @@ begin
   begin
     if Child.IsElement then
     begin
-      if TElement(Child).NamespaceId = NamespaceSvg then
+      if TElement(Child).IsSvg then
       begin
         ChildCopy := CopyElement(TElement(Child), Budget);
         Result.AppendChild(ChildCopy);
@@ -215,7 +215,7 @@ begin
   Child := Element.FirstChild;
   while (Child <> nil) and (Budget > 0) do
   begin
-    if Child.IsElement and (TElement(Child).NamespaceId = NamespaceSvg) then
+    if Child.IsElement and (TElement(Child).IsSvg) then
       Result := MixSignature(Result, SubtreeSignature(TElement(Child), Budget))
     else if Child.IsText then
       Result := MixSignature(Result, TextSignature(TCharacterData(Child).Data));
@@ -284,7 +284,7 @@ begin
   if FPage = nil then
     Exit;
   Element := FPage.GetElementById(Id);
-  if (Element = nil) or (Element.NamespaceId <> NamespaceSvg) then
+  if (Element = nil) or (not Element.IsSvg) then
     Exit;
   Budget := MaximumCopiedNodes;
   Result := CopyElement(Element, Budget);

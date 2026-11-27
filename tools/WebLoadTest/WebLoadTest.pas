@@ -37,6 +37,7 @@ uses
   WebLoadTest.Loading,
   WebLoadTest.Rendering,
   WebLoadTest.Scripting,
+  WebLoadTest.Xhtml,
   WebLoadTest.Editing,
   WebLoadTest.Pointer,
   WebLoadTest.Frames,
@@ -93,6 +94,7 @@ begin
   RunLoadingTests;
   RunRenderingTests;
   RunScriptingTests;
+  RunXhtmlTests;
   RunFrameTests;
   RunEditingTests;
   RunPointerTests;

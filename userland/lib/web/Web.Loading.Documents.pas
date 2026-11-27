@@ -59,6 +59,7 @@ uses
   Web.Atoms,
   Web.Dom,
   Web.Html.Parser,
+  Web.Xml.Parser,
   Web.Encoding.Labels,
   Web.Encoding.Decoders,
   Web.EventLoop,
@@ -121,8 +122,10 @@ type
     FTextBuffer: TTextBuffer;
     FTextNode: TText;
     FTextPending: string;
-    { An XML document's bytes, parsed whole once they are all here. }
+    { An XML document's bytes, parsed once they are all here, by
+      FXmlParser (which pauses for parsing-blocking scripts). }
     FXmlBytes: string;
+    FXmlParser: TXmlDocumentParser;
     FOnTitleChanged: TTitleChangedEvent;
     FOnDomContentLoaded: TLoaderEvent;
     FOnLoaded: TLoaderEvent;
@@ -156,6 +159,8 @@ type
     procedure AppendTextContent(Bytes: PByte; Count: SizeInt; Flush: Boolean);
     procedure BuildTextDocument;
     procedure BuildXmlDocument;
+    procedure RunXmlParser;
+    function XmlScriptEnded(Script: TElement): Boolean;
     procedure BuildImageDocument;
   protected
     procedure HandleLinkChanged(Element: TElement);
@@ -231,8 +236,7 @@ uses
   Web.Fetch.ReferrerPolicy,
   Web.Fetch.ContentSecurityPolicy,
   Web.Navigation.Events,
-  Web.Origins,
-  Web.Xml.Parser;
+  Web.Origins;
 
 type
   { The observer's calls, forwarded to the loader. }
@@ -383,6 +387,7 @@ begin
   FFetcher.CancelGroup(Self);
   FLoop.DiscardTasks(Self);
   FParser.Free;
+  FXmlParser.Free;
   FScanner.Free;
   FIcons.Free;
   FScripts.Free;
@@ -450,15 +455,16 @@ begin
 end;
 
 { The XML document from its bytes (the byte order mark, else the
-  transport's charset, else UTF-8), or the parser error document. }
+  transport's charset, else UTF-8), or the parser error document. With
+  scripting on, the parser runs the HTML script elements it meets (the
+  parser pauses while one blocks it: RunXmlParser goes on later). }
 procedure TDocumentLoader.BuildXmlDocument;
 var
   Encoding: TTextEncoding;
   MarkLength: Integer;
   Decoder: TTextDecoder;
   Buffer: TTextBuffer;
-  Bytes, Error: string;
-  Root: TElement;
+  Bytes: string;
 begin
   Bytes := FXmlBytes;
   FXmlBytes := '';
@@ -474,16 +480,41 @@ begin
   Buffer := TTextBuffer.Create;
   try
     Decoder.Decode(PByte(PChar(Bytes)), Length(Bytes), Buffer, True);
-    if ParseXmlInto(FDocument, Buffer.Text, Error) then
-      Exit;
+    FXmlParser := TXmlDocumentParser.Create(FDocument, Buffer.Text);
   finally
     Buffer.Free;
     Decoder.Free;
   end;
-  FDocument.ReplaceChildren([]);
-  Root := FDocument.CreateElementNS('http://www.mozilla.org/newlayout/xml/parsererror.xml', 'parsererror');
-  Root.AppendChild(FDocument.CreateTextNode('XML Parsing Error: ' + Error));
-  FDocument.AppendChild(Root);
+  if FScripts.Executor <> nil then
+    FXmlParser.OnScriptEnd := @XmlScriptEnded;
+  RunXmlParser;
+end;
+
+{ The XML parser on until it ends (then the end of parsing) or pauses for
+  a script. }
+procedure TDocumentLoader.RunXmlParser;
+begin
+  Inc(FInParser);
+  EnterPhase(PhaseHtmlParse);
+  try
+    if FXmlParser.Paused then
+      FXmlParser.Resume
+    else
+      FXmlParser.Run;
+  finally
+    LeavePhase;
+    Dec(FInParser);
+  end;
+  if FAborted or not FXmlParser.Ended then
+    Exit;
+  if FXmlParser.Failed then
+    ShowXmlParserError(FDocument, FXmlParser.Error);
+  TheEnd;
+end;
+
+function TDocumentLoader.XmlScriptEnded(Script: TElement): Boolean;
+begin
+  Result := FScripts.XmlScriptEndTagReached(Script);
 end;
 
 procedure TDocumentLoader.BuildTextDocument;
@@ -652,10 +683,7 @@ begin
         TheEnd;
       end;
     ContentXml:
-      begin
-        BuildXmlDocument;
-        TheEnd;
-      end;
+      BuildXmlDocument;
   else
     TheEnd;
   end;
@@ -713,6 +741,11 @@ end;
 
 procedure TDocumentLoader.ResumeParserTask;
 begin
+  if not FAborted and (FXmlParser <> nil) and FXmlParser.Paused then
+  begin
+    RunXmlParser;
+    Exit;
+  end;
   if FAborted or (FParser = nil) or not FParser.Paused then
     Exit;
   ParserCall(nil, 0, False, True);

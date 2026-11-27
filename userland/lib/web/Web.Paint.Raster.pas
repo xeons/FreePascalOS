@@ -220,8 +220,9 @@ begin
     Exit;
   end;
   BeginShape(Shape);
-  AddShapeRoundedRectangleCorners(Shape, DeviceX(Raster, X), DeviceY(Raster, Y), DeviceX(Raster, X + Width),
-    DeviceY(Raster, Y + Height), ScaledRadii(Raster, Raster.List.Radii[RadiiIndex]), True);
+  AddShapeRoundedRectangleCorners(Shape, Floor(DeviceX(Raster, X) + 0.5), Floor(DeviceY(Raster, Y) + 0.5),
+    Floor(DeviceX(Raster, X + Width) + 0.5), Floor(DeviceY(Raster, Y + Height) + 0.5),
+    ScaledRadii(Raster, Raster.List.Radii[RadiiIndex]), True);
   FillShape(Raster.Canvas, Shape, Color);
 end;
 
@@ -374,13 +375,19 @@ var
   Color: TColor;
 begin
   Sides := Raster.List.Borders[Item.Index];
-  Left := DeviceX(Raster, Item.X);
-  Top := DeviceY(Raster, Item.Y);
-  Right := DeviceX(Raster, Item.X + Item.Width);
-  Bottom := DeviceY(Raster, Item.Y + Item.Height);
+  { The border box snapped to device pixels, as its background is
+    (FillBox): the edges of a box at a fractional position stay sharp
+    and meet its background exactly. Widths are whole device pixels
+    already (Css.StyleCompute's SnapBorderWidth). }
+  Left := Floor(DeviceX(Raster, Item.X) + 0.5);
+  Top := Floor(DeviceY(Raster, Item.Y) + 0.5);
+  Right := Floor(DeviceX(Raster, Item.X + Item.Width) + 0.5);
+  Bottom := Floor(DeviceY(Raster, Item.Y + Item.Height) + 0.5);
   for Side := 0 to 3 do
   begin
     Widths[Side] := Sides.Widths[Side] * Raster.View.Scale;
+    if Widths[Side] > 0 then
+      Widths[Side] := Max(1, Floor(Widths[Side] + 0.5));
     if KeywordIn(Sides.Styles[Side], [kwNone, kwHidden]) then
       Widths[Side] := 0;
   end;

@@ -828,8 +828,6 @@
   area.relList in http://www.w3.org/1999/xhtml namespace should be DOMTokenList.
   link.sizes in http://www.w3.org/1999/xhtml namespace should be DOMTokenList.
   output.htmlFor in http://www.w3.org/1999/xhtml namespace should be DOMTokenList.
-/dom/nodes/Attr-prefix-xhtml.xhtml
-  Attr.prefix present
 /dom/nodes/CharacterData-surrogates.html
   !passing
 /dom/nodes/DOMImplementation-createHTMLDocument-with-saved-implementation.html
@@ -1110,8 +1108,6 @@
   !harness EXTERNAL-TIMEOUT
 /dom/nodes/Document-contentType/contentType/contenttype_javascripturi.html
   !harness TIMEOUT
-  !passing
-/dom/nodes/Document-createCDATASection-xhtml.xhtml
   !passing
 /dom/nodes/Document-createElement-namespace.html
   !harness TIMEOUT
@@ -1422,7 +1418,28 @@
   textevent should be an alias for TextEvent.
   touchevent should be an alias for TouchEvent.
 /dom/nodes/Document-createProcessingInstruction-xhtml.xhtml
-  !harness TIMEOUT
+  Should get a ProcessingInstruction for target ":" and data "x".
+  Should get a ProcessingInstruction for target "xml:fail" and data "x".
+  Should throw an INVALID_CHARACTER_ERR for target "-A" and data "x".
+  Should throw an INVALID_CHARACTER_ERR for target ".A" and data "x".
+  Should throw an INVALID_CHARACTER_ERR for target "0" and data "x".
+  Should throw an INVALID_CHARACTER_ERR for target "0A" and data "x".
+  Should throw an INVALID_CHARACTER_ERR for target "?" and data "x".
+  Should throw an INVALID_CHARACTER_ERR for target "??" and data "x".
+  Should throw an INVALID_CHARACTER_ERR for target "Aª" and data "x".
+  Should throw an INVALID_CHARACTER_ERR for target "Aº" and data "x".
+  Should throw an INVALID_CHARACTER_ERR for target "A×" and data "x".
+  Should throw an INVALID_CHARACTER_ERR for target "A÷" and data "x".
+  Should throw an INVALID_CHARACTER_ERR for target "U+d800" and data "x".
+  Should throw an INVALID_CHARACTER_ERR for target "\\\\A" and data "x".
+  Should throw an INVALID_CHARACTER_ERR for target "\\ufffe" and data "x".
+  Should throw an INVALID_CHARACTER_ERR for target "\\uffff" and data "x".
+  Should throw an INVALID_CHARACTER_ERR for target "ª" and data "x".
+  Should throw an INVALID_CHARACTER_ERR for target "·A" and data "x".
+  Should throw an INVALID_CHARACTER_ERR for target "º" and data "x".
+  Should throw an INVALID_CHARACTER_ERR for target "×A" and data "x".
+  Should throw an INVALID_CHARACTER_ERR for target "÷A" and data "x".
+  Should throw an INVALID_CHARACTER_ERR for target 0 and data "x".
 /dom/nodes/Document-createProcessingInstruction.html
   Should get a ProcessingInstruction for target ":" and data "x".
   Should get a ProcessingInstruction for target "xml:fail" and data "x".
@@ -1446,30 +1463,18 @@
   Should throw an INVALID_CHARACTER_ERR for target "×A" and data "x".
   Should throw an INVALID_CHARACTER_ERR for target "÷A" and data "x".
   Should throw an INVALID_CHARACTER_ERR for target 0 and data "x".
-/dom/nodes/Document-getElementsByTagName-xhtml.xhtml
-  !harness ERROR
 /dom/nodes/DocumentFragment-getElementById.html
   Empty string ID values
 /dom/nodes/Element-childElement-null-svg.svg
   !harness EXTERNAL-TIMEOUT
-/dom/nodes/Element-childElement-null-xhtml.xhtml
-  !harness ERROR
 /dom/nodes/Element-childElementCount-dynamic-add-svg.svg
   !harness EXTERNAL-TIMEOUT
-/dom/nodes/Element-childElementCount-dynamic-add-xhtml.xhtml
-  !harness ERROR
 /dom/nodes/Element-childElementCount-dynamic-remove-svg.svg
   !harness EXTERNAL-TIMEOUT
-/dom/nodes/Element-childElementCount-dynamic-remove-xhtml.xhtml
-  !harness ERROR
 /dom/nodes/Element-childElementCount-nochild-svg.svg
   !harness EXTERNAL-TIMEOUT
-/dom/nodes/Element-childElementCount-nochild-xhtml.xhtml
-  !harness ERROR
 /dom/nodes/Element-childElementCount-svg.svg
   !harness EXTERNAL-TIMEOUT
-/dom/nodes/Element-childElementCount-xhtml.xhtml
-  !harness ERROR
 /dom/nodes/Element-classlist.html
   classList.replace(" ", "") with attribute value null (HTML node)
   classList.replace(" ", "") with attribute value null (MathML node)
@@ -1479,23 +1484,17 @@
 /dom/nodes/Element-closest.html
   Element.closest with context node 'test11' and selector ':invalid'
 /dom/nodes/Element-firstElementChild-entity-xhtml.xhtml
-  !harness ERROR
+  !passing
 /dom/nodes/Element-firstElementChild-entity.svg
   !harness EXTERNAL-TIMEOUT
 /dom/nodes/Element-firstElementChild-namespace-svg.svg
   !harness EXTERNAL-TIMEOUT
-/dom/nodes/Element-firstElementChild-namespace-xhtml.xhtml
-  !harness ERROR
 /dom/nodes/Element-firstElementChild-svg.svg
   !harness EXTERNAL-TIMEOUT
-/dom/nodes/Element-firstElementChild-xhtml.xhtml
-  !harness ERROR
 /dom/nodes/Element-getElementsByTagName-change-document-HTMLNess.html
   !passing
 /dom/nodes/Element-lastElementChild-svg.svg
   !harness EXTERNAL-TIMEOUT
-/dom/nodes/Element-lastElementChild-xhtml.xhtml
-  !harness ERROR
 /dom/nodes/Element-matches-disabled-pseudo-class.html
   !passing
   Disabled fieldset itself should match :disabled pseudo-class
@@ -1505,16 +1504,10 @@
   In-document Element.matches: :target pseudo-class selector, matching the element referenced by the URL fragment identifier (with no refNodes): :target
 /dom/nodes/Element-nextElementSibling-svg.svg
   !harness EXTERNAL-TIMEOUT
-/dom/nodes/Element-nextElementSibling-xhtml.xhtml
-  !harness ERROR
 /dom/nodes/Element-previousElementSibling-svg.svg
   !harness EXTERNAL-TIMEOUT
-/dom/nodes/Element-previousElementSibling-xhtml.xhtml
-  !harness ERROR
 /dom/nodes/Element-siblingElement-null-svg.svg
   !harness EXTERNAL-TIMEOUT
-/dom/nodes/Element-siblingElement-null-xhtml.xhtml
-  !harness ERROR
 /dom/nodes/Element-webkitMatchesSelector.html
   In-document Element.webkitMatchesSelector: :target pseudo-class selector, matching the element referenced by the URL fragment identifier (with no refNodes): :target
 /dom/nodes/MutationObserver-childList.html
@@ -1533,8 +1526,6 @@
   A removed subtree is no longer observed after mutation observers are notified, even if no record was queued
   Removing a node from an observed subtree queues the mutation observer microtask
   observe() stops observing a removed subtree through the target, but not through other targets
-/dom/nodes/MutationObserver-xml-parser.xhtml
-  !harness ERROR
 /dom/nodes/Node-appendChild.html
   Adopting a non-orphan
   Adopting an orphan
@@ -1544,16 +1535,7 @@
 /dom/nodes/Node-isConnected.html
   Test with iframes
 /dom/nodes/Node-isEqualNode-xhtml.xhtml
-  !harness TIMEOUT
   isEqualNode should return true when only the internal subsets of DocumentTypes differ.
-/dom/nodes/Node-lookupPrefix.xhtml
-  !passing
-  Node.lookupPrefix 1
-  Node.lookupPrefix 2
-  Node.lookupPrefix 3
-  Node.lookupPrefix 4
-/dom/nodes/Node-nodeName-xhtml.xhtml
-  For Element nodes, nodeName should return the same as tagName.
 /dom/nodes/Node-parentNode.html
   Removed iframe
 /dom/nodes/Node-removeChild.html
@@ -1585,7 +1567,12 @@
   !harness ERROR
   !passing
 /dom/nodes/ParentNode-querySelector-All-xht.xht
-  !harness ERROR
+  Document.querySelector: :link and :visited pseudo-class selectors, matching no elements: #head :link, #head :visited
+  Document.querySelector: :target pseudo-class selector, matching the element referenced by the URL fragment identifier: :target
+  Document.querySelectorAll: :link and :visited pseudo-class selectors, matching no elements: #head :link, #head :visited
+  Document.querySelectorAll: :target pseudo-class selector, matching the element referenced by the URL fragment identifier: :target
+  In-document Element.querySelector: :target pseudo-class selector, matching the element referenced by the URL fragment identifier: :target
+  In-document Element.querySelectorAll: :target pseudo-class selector, matching the element referenced by the URL fragment identifier: :target
 /dom/nodes/ParentNode-querySelector-All.html
   Document.querySelector: :link and :visited pseudo-class selectors, matching no elements: #head :link, #head :visited
   Document.querySelector: :target pseudo-class selector, matching the element referenced by the URL fragment identifier: :target
@@ -1595,17 +1582,11 @@
   In-document Element.querySelectorAll: :target pseudo-class selector, matching the element referenced by the URL fragment identifier: :target
 /dom/nodes/ParentNode-querySelector-host-pseudo-class.html
   !passing
-/dom/nodes/ParentNode-querySelector-underscore-local-name.xhtml
-  !passing
 /dom/nodes/ParentNode-replaceChildren.html
   Document.replaceChildren() with a DocumentFragment containing a single element, replacing an existing doctype and element.
   Document.replaceChildren() with a doctype, replacing an existing doctype and element.
   Document.replaceChildren() with an element, replacing an existing doctype and element.
 /dom/nodes/ProcessingInstruction-escapes-1.xhtml
-  !harness ERROR
-/dom/nodes/ProcessingInstruction-literal-1.xhtml
-  !passing
-/dom/nodes/ProcessingInstruction-literal-2.xhtml
   !passing
 /dom/nodes/adoption.window.html
   adoptNode() and DocumentFragment with host

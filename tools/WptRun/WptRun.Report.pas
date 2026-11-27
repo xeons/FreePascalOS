@@ -18,7 +18,8 @@
 
 {
   The pass rates of a run per directory: subtests passed of all (a test
-  without subtests counts as one), tests passing entirely, and how the
+  without subtests counts as one, a reftest too), tests passing
+  entirely, reftests passing, and how the
   results compare with the expectations (unexpected failures, newly
   passing). A directory is a test's path cut to its group's depth (the
   depth of the path asked for, or --depth).
@@ -39,6 +40,7 @@ type
   public
     Tests, PassingTests: Integer;
     Subtests, PassingSubtests: Integer;
+    Reftests, PassingReftests: Integer;
     Unexpected, NewlyPassing: Integer;
     Milliseconds: Double;
   end;
@@ -131,6 +133,12 @@ var
     Inc(Into.Tests);
     if (Passed = Total) and (Outcome.Harness = HarnessOk) then
       Inc(Into.PassingTests);
+    if Outcome.Reftest then
+    begin
+      Inc(Into.Reftests);
+      if Outcome.Harness = HarnessOk then
+        Inc(Into.PassingReftests);
+    end;
     Inc(Into.Subtests, Total);
     Inc(Into.PassingSubtests, Passed);
     Inc(Into.Unexpected, Unexpected);
@@ -163,16 +171,17 @@ procedure TRunReport.Write(var Output: Text; Seconds: Double);
 
   procedure Line(const Name: string; Tally: TDirectoryTally);
   begin
-    WriteLn(Output, Format('%-44s %6d/%-6d %8d/%-8d %7s %6d %6d', [Name, Tally.PassingTests, Tally.Tests,
-      Tally.PassingSubtests, Tally.Subtests, Percent(Tally.PassingSubtests, Tally.Subtests), Tally.Unexpected,
+    WriteLn(Output, Format('%-44s %6d/%-6d %8d/%-8d %7s %6d/%-6d %7s %6d %6d', [Name, Tally.PassingTests,
+      Tally.Tests, Tally.PassingSubtests, Tally.Subtests, Percent(Tally.PassingSubtests, Tally.Subtests),
+      Tally.PassingReftests, Tally.Reftests, Percent(Tally.PassingReftests, Tally.Reftests), Tally.Unexpected,
       Tally.NewlyPassing]));
   end;
 
 var
   Index: Integer;
 begin
-  WriteLn(Output, Format('%-44s %13s %17s %7s %6s %6s', ['directory', 'tests passing', 'subtests passing', 'rate',
-    'unexp', 'new']));
+  WriteLn(Output, Format('%-44s %13s %17s %7s %13s %7s %6s %6s', ['directory', 'tests passing', 'subtests passing',
+    'rate', 'reftests pass', 'rate', 'unexp', 'new']));
   for Index := 0 to FDirectories.Count - 1 do
     Line(FDirectories[Index], TDirectoryTally(FDirectories.Objects[Index]));
   Line('total', FTotal);

@@ -57,6 +57,8 @@ var
   ChildInput: TLayoutInput;
   OwnPositioned: TPositionedList;
   SavedMargins: TBoxEdges;
+  HasRatio: Boolean;
+  Ratio: Double;
 begin
   if Container.Kind = bkViewport then
   begin
@@ -95,8 +97,12 @@ begin
   HasBottom := TryLength(Box.Style, cpBottom, ContainingHeight, BottomValue);
   AutoWidth := SpecifiedBorderBoxWidth(Box, ContainingWidth) < 0;
   AutoHeight := SpecifiedBorderBoxHeight(Box, ContainingHeight) < 0;
+  HasRatio := PreferredAspectRatio(Box.Style, Ratio);
   { The width. }
-  if AutoWidth then
+  if AutoWidth and HasRatio and not AutoHeight then
+    Width := ClampWidth(Box, WidthFromRatio(Box, SpecifiedBorderBoxHeight(Box, ContainingHeight), Ratio),
+      ContainingWidth)
+  else if AutoWidth then
   begin
     if HasLeft and HasRight then
       Width := ContainingWidth - LeftValue - RightValue - Box.Margin[sideLeft] - Box.Margin[sideRight]
@@ -139,7 +145,7 @@ begin
   ChildInput.BfcX := 0;
   ChildInput.BfcY := 0;
   OwnPositioned := nil;
-  if AutoHeight and HasTop and HasBottom then
+  if AutoHeight and HasTop and HasBottom and not HasRatio then
     ChildInput.FixedHeight := ContainingHeight - TopValue - BottomValue - Box.Margin[sideTop] -
       Box.Margin[sideBottom];
   { Laid out again whenever its containing block is (the static position

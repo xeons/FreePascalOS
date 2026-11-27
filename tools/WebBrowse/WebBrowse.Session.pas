@@ -51,6 +51,8 @@ type
     QuietMilliseconds: Double;
     StallSeconds: Integer;
     FontDirectory: string;
+    { Families beside the system's (WebUserFontDirectory). }
+    UserFontDirectory: string;
     EvalSource: string;
     Verbose: Boolean;
     { Sample the page thread's stack every millisecond and print where
@@ -82,6 +84,10 @@ type
       with this (a test harness saying it is done), not when the page
       goes quiet; the outputs then follow as usual. }
     FinishMarker: string;
+    { web-platform-tests' reftest-wait: once the page is quiet, a
+      TestRendered event (bubbling) at the root element; while the root's
+      class has reftest-wait, the page is not done. }
+    ReftestWait: Boolean;
   end;
 
 function DefaultBrowseOptions: TBrowseOptions;
@@ -185,12 +191,14 @@ type
     FWaitUntil: Double;
     { The finish marker was seen on the console. }
     FFinished: Boolean;
+    FTestRenderedSent: Boolean;
     procedure ConsoleMessage(const Level, Text: string);
     procedure AdoptDocument(Document: TDocument);
     procedure ReleaseDocument;
     procedure Frame;
     function Loaded: Boolean;
     function Quiet: Boolean;
+    function ReftestHolding: Boolean;
     procedure Report;
     procedure PaintPng;
     procedure RunEval;
@@ -447,6 +455,32 @@ begin
     that alone does not keep the page from being quiet. }
   Result := Loaded and (FPage.Fetcher.ActiveJobCount = 0) and (FSink.PendingStyleImageCount = 0) and
     not FPage.Loop.HasReadyTask and ((FLayout = nil) or not FLayout.NeedsUpdate or FLayout.AnimationsRunning);
+end;
+
+{ The root element's class names reftest-wait (ReftestWait): TestRendered
+  is fired at it the first time the page is quiet, and the page is held
+  until the class goes. }
+function TBrowseSession.ReftestHolding: Boolean;
+var
+  Root: TElement;
+  ClassNames: TStringArray;
+  Index: Integer;
+begin
+  Result := False;
+  if not FOptions.ReftestWait or (FDocument = nil) or not Loaded then
+    Exit;
+  Root := FDocument.DocumentElement;
+  if Root = nil then
+    Exit;
+  ClassNames := Root.GetAttribute('class').Split([' ', #9, #10, #12, #13]);
+  for Index := 0 to High(ClassNames) do
+    if ClassNames[Index] = 'reftest-wait' then
+      Result := True;
+  if Result and not FTestRenderedSent and Quiet then
+  begin
+    FTestRenderedSent := True;
+    Evaluate('document.documentElement.dispatchEvent(new Event("TestRendered", {bubbles: true}))');
+  end;
 end;
 
 { The pointer moved down the middle of the viewport in HoverMoves steps,
@@ -856,7 +890,7 @@ begin
     end;
     if FFinished then
       Break;
-    if (FOptions.FinishMarker = '') and Quiet and not StepsBusy then
+    if (FOptions.FinishMarker = '') and Quiet and not StepsBusy and not ReftestHolding then
     begin
       if FQuietSince < 0 then
         FQuietSince := Clock;
@@ -1074,6 +1108,11 @@ begin
   begin
     UseSystemFontConfiguration(Options.FontDirectory);
     WebFontDirectory := Options.FontDirectory;
+    ResetWebFontLibrary;
+  end;
+  if Options.UserFontDirectory <> WebUserFontDirectory then
+  begin
+    WebUserFontDirectory := Options.UserFontDirectory;
     ResetWebFontLibrary;
   end;
   StartProfiling(@MonotonicMicroseconds);

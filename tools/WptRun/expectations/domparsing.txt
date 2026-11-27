@@ -1,0 +1,17 @@
+# Known failures for tools/WptRun: a test path, then indented: "!harness STATUS"
+# when the harness does not finish OK, and each subtest that does not pass.
+# Rewritten by "wptrun --update"; tests not listed are expected to pass.
+/domparsing/createContextualFragment-xhtml.xhtml
+  !passing
+/domparsing/innerhtml-01.xhtml
+  !passing
+/domparsing/innerhtml-03.xhtml
+  !passing
+  innerHTML in XHTML 5
+  innerHTML in XHTML 6
+/domparsing/innerhtml-05.xhtml
+  !passing
+/domparsing/insert_adjacent_html-xhtml.xhtml
+  insertAdjacentHTML in HTML
+/domparsing/xml-serialization.xhtml
+  ProcessingInstruction: target contains a 'COLON' (U+003A)

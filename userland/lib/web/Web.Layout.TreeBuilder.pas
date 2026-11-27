@@ -77,6 +77,7 @@ type
     procedure FixUpTable(Box: TLayoutBox);
     procedure FixUpTableRowGroup(Box: TLayoutBox);
     procedure FixUpTableRow(Box: TLayoutBox);
+    procedure WrapMisparentedTableParts(Box: TLayoutBox);
     procedure FixUp(Box: TLayoutBox);
     procedure LinkToNode(Box: TLayoutBox; Node: TNode; Principal: Boolean);
   public
@@ -357,10 +358,10 @@ begin
           Include(Result.Flags, bfInlineLevel);
         end;
       kwTable:
-        Result := TLayoutBox.Create(bkTable, Element, Style);
+        Result := TTableBox.Create(bkTable, Element, Style);
       kwInlineTable:
         begin
-          Result := TLayoutBox.Create(bkTable, Element, Style);
+          Result := TTableBox.Create(bkTable, Element, Style);
           Include(Result.Flags, bfInlineLevel);
         end;
       kwTableRowGroup, kwTableHeaderGroup, kwTableFooterGroup:
@@ -1021,8 +1022,54 @@ begin
   end;
 end;
 
+{ CSS 2.2 17.2.1, "generate missing parents": a run of table parts (rows,
+  row groups, cells, captions, columns, with the white space between
+  them) whose parent is not a table part gets an anonymous table around
+  it, an inline-level one in an inline box; the table's own fix-up then
+  adds the row groups, rows and cells it misses. }
+procedure TBoxTreeBuilder.WrapMisparentedTableParts(Box: TLayoutBox);
+var
+  Child, Next, Last, Table: TLayoutBox;
+begin
+  Child := Box.FirstChild;
+  while Child <> nil do
+  begin
+    if not IsTablePart(Child) or Child.IsOutOfFlow then
+    begin
+      Child := Child.NextSibling;
+      Continue;
+    end;
+    { The run ends at its last table part. }
+    Last := Child;
+    Next := Child.NextSibling;
+    while (Next <> nil) and ((IsTablePart(Next) and not Next.IsOutOfFlow) or IsCollapsibleWhiteSpaceBox(Next)) do
+    begin
+      if IsTablePart(Next) then
+        Last := Next;
+      Next := Next.NextSibling;
+    end;
+    Table := TTableBox.Create(bkTable, nil, AnonymousStyleFor(Box.Style));
+    Table.Flags := Table.Flags + [bfAnonymous, bfNewFormattingContext];
+    if Box.Kind = bkInline then
+      Include(Table.Flags, bfInlineLevel);
+    Box.InsertBefore(Table, Child);
+    repeat
+      Next := Child.NextSibling;
+      Box.RemoveChild(Child);
+      Table.AppendChild(Child);
+      if Child = Last then
+        Break;
+      Child := Next;
+    until False;
+    FixUpTable(Table);
+    Child := Table.NextSibling;
+  end;
+end;
+
 procedure TBoxTreeBuilder.FixUp(Box: TLayoutBox);
 begin
+  if Box.Kind in [bkBlock, bkInline, bkTableCell, bkTableCaption, bkFlex, bkGrid] then
+    WrapMisparentedTableParts(Box);
   case Box.Kind of
     bkBlock, bkTableCell, bkTableCaption:
       FixUpBlockContainer(Box);
@@ -1034,16 +1081,6 @@ begin
       FixUpTableRowGroup(Box);
     bkTableRow:
       FixUpTableRow(Box);
-  end;
-  { Table parts outside a table are laid out as blocks. }
-  if IsTablePart(Box) and ((Box.Parent = nil) or not (Box.Parent.Kind in [bkTable, bkTableRowGroup, bkTableRow])) and
-     (Box.Kind <> bkTableCell) then
-  begin
-    if Box.Kind in [bkTableRowGroup, bkTableRow] then
-    begin
-      Box.Kind := bkBlock;
-      FixUpBlockContainer(Box);
-    end;
   end;
 end;
 

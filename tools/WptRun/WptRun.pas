@@ -19,10 +19,13 @@
 {
   wptrun: web-platform-tests on the Linux host with the browser engine
   (make wpt; not part of make test). It starts WPT's own server from a
-  checkout (WptRun.Server), finds the testharness tests under the paths
-  given (WptRun.Tests), runs each in a webbrowse session of its own,
-  several at once (WptRun.Jobs, WptRun.Child), with the real
-  testharness.js and our testharnessreport.js, and reports pass rates
+  checkout (WptRun.Server), finds the testharness tests and reftests
+  under the paths given (WptRun.Tests), runs each in a webbrowse session
+  of its own, several at once (WptRun.Jobs, WptRun.Child), with the real
+  testharness.js and our testharnessreport.js, or for a reftest renders
+  it and its references at 800x600 and compares the pixels
+  (WptRun.ReftestChild; screenshots of failures in
+  build/wpt/reftest-shots), and reports pass rates
   per directory, the failures the expectations do not know and the
   known failures that now pass (WptRun.Expectations).
 
@@ -42,6 +45,9 @@
     -v             each test as it finishes
     --dry-run      print the tests the paths hold; run none
     -f FONTDIR     font directory (userland/fonts)
+    --shots DIR    where failing reftests leave their screenshots
+                   (build/wpt/reftest-shots; another for a second run
+                   at the same time)
 
   Exit status: 0 when nothing failed unexpectedly, 1 otherwise, 2 when
   the run could not start.
@@ -64,6 +70,7 @@ uses
   WptRun.Server,
   WptRun.Report,
   WptRun.Child,
+  WptRun.ReftestChild,
   WptRun.Limits;
 
 type
@@ -86,6 +93,8 @@ type
     Jobs: Integer;
     Depth: Integer;
     List, Update, Verbose, DryRun: Boolean;
+    { Screenshots of the reftests that failed, one directory per test. }
+    ShotDirectory: string;
     Multiplier: Double;
     FontDirectory: string;
     constructor Create;
@@ -93,6 +102,34 @@ type
     procedure AddPath(const Path: string);
     function Run: Integer;
   end;
+
+
+{ The checkout's fonts/Ahem.ttf as a family of a directory of its own
+  (Directory/ahem), as wptrunner installs it for the tests (which name
+  "Ahem" without @font-face); the directory, '' when there is no Ahem. }
+function InstallTestFonts(const WptRoot, Directory: string): string;
+var
+  Source, Target: TFileStream;
+  Family: string;
+begin
+  Result := '';
+  if not FileExists(IncludeTrailingPathDelimiter(WptRoot) + 'fonts/Ahem.ttf') then
+    Exit;
+  Family := IncludeTrailingPathDelimiter(Directory) + 'ahem';
+  ForceDirectories(Family);
+  Source := TFileStream.Create(IncludeTrailingPathDelimiter(WptRoot) + 'fonts/Ahem.ttf', fmOpenRead or fmShareDenyNone);
+  try
+    Target := TFileStream.Create(Family + '/Ahem.ttf', fmCreate);
+    try
+      Target.CopyFrom(Source, 0);
+    finally
+      Target.Free;
+    end;
+  finally
+    Source.Free;
+  end;
+  Result := ExpandFileName(Directory);
+end;
 
 function NowSeconds: Double;
 var
@@ -134,6 +171,7 @@ begin
     Jobs := 1;
   Multiplier := 1;
   FontDirectory := 'userland/fonts';
+  ShotDirectory := 'build/wpt/reftest-shots';
 end;
 
 destructor TWptRunner.Destroy;
@@ -284,6 +322,9 @@ begin
     Settings.CertificateFile := IncludeTrailingPathDelimiter(WptRoot) + 'tools/certs/cacert.pem';
     Settings.FontDirectory := FontDirectory;
     Settings.TimeoutMultiplier := Multiplier;
+    Settings.WptRoot := ExcludeTrailingPathDelimiter(ExpandFileName(WptRoot));
+    Settings.ShotDirectory := ExpandFileName(ShotDirectory);
+    Settings.UserFontDirectory := InstallTestFonts(WptRoot, 'build/wpt/fonts');
     Started := NowSeconds;
     RunTests(FTests, Settings, @TestFinished);
   finally
@@ -312,7 +353,7 @@ end;
 procedure Usage;
 begin
   WriteLn(StdErr, 'usage: wptrun [-j N] [--wpt DIR] [--list] [--update] [--expectations DIR] [--depth N]');
-  WriteLn(StdErr, '         [--multiplier X] [-v] [--dry-run] [-f FONTDIR] PATH|@FILE...');
+  WriteLn(StdErr, '         [--multiplier X] [-v] [--dry-run] [-f FONTDIR] [--shots DIR] PATH|@FILE...');
   Halt(2);
 end;
 
@@ -334,6 +375,11 @@ begin
   begin
     LimitChildResources;
     Halt(RunChild);
+  end;
+  if (ParamCount >= 1) and (ParamStr(1) = '--reftest') then
+  begin
+    LimitChildResources;
+    Halt(RunReftestChild);
   end;
   Runner := TWptRunner.Create;
   try
@@ -361,6 +407,8 @@ begin
         Runner.Verbose := True
       else if Argument = '-f' then
         Runner.FontDirectory := NextArgument
+      else if Argument = '--shots' then
+        Runner.ShotDirectory := NextArgument
       else if (Argument <> '') and (Argument[1] = '-') then
         Usage
       else

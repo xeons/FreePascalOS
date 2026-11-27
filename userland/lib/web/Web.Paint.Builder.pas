@@ -55,7 +55,8 @@ uses
   Math, SysUtils, Web.Dom, Web.Atoms, Web.Layout.LineClamp, Web.Paint.Filters, Drawing.Colors, Drawing.Rasterizer, Drawing.SmoothRoundedRectangles,
   Css.ComputedStyle, Css.ComputedValues, Css.Colors, Css.Values, Css.Keywords, Css.PropertyIds,
   Web.Layout.Values, Web.Layout.TreeBuilder, Web.Text.FontInstances, Web.Paint.Sticky, Image.Model,
-  Web.Dom.FormControls, Web.Dom.InputValues, Css.TransformMatrices, Web.Layout.Transforms;
+  Web.Dom.FormControls, Web.Dom.InputValues, Css.TransformMatrices, Web.Layout.Transforms,
+  Web.Layout.TableBorders;
 
 type
   TClipEntry = record
@@ -770,7 +771,9 @@ begin
   if Box <> Builder.CanvasBox then
     PaintBackgroundLayers(Builder, Box, Box.Style, X, Y, Box.Width, Box.Height, Radii, HasRadii);
   PaintShadows(Builder, Box, X, Y, True, Radii, HasRadii);
-  PaintBorders(Builder, Box, X, Y, Radii, HasRadii);
+  { Collapsing table borders are the table's (PaintCollapsedBorders). }
+  if not (bfCollapsedBorders in Box.Flags) then
+    PaintBorders(Builder, Box, X, Y, Radii, HasRadii);
   if Box.Kind = bkReplaced then
     PaintReplacedContent(Builder, TReplacedBox(Box), X, Y);
 end;
@@ -1014,6 +1017,94 @@ begin
     Result := 0;
 end;
 
+{ One collapsed edge as a rectangle (two for double), in its owner's
+  color for its side. }
+procedure AddCollapsedEdge(var Builder: TBuilder; Table: TLayoutBox; constref Edge: TCollapsedEdge;
+  Left, Top, Width, Height: Single; Horizontal: Boolean);
+const
+  ColorIds: array[TBoxSide] of TCssPropertyId = (cpBorderTopColor, cpBorderRightColor, cpBorderBottomColor,
+    cpBorderLeftColor);
+var
+  Entry: PDisplayItem;
+  Color: TColor;
+  Third: Single;
+begin
+  if (Edge.Owner = nil) or (Edge.Width <= 0) or KeywordIn(Edge.Style, [kwNone, kwHidden]) or (Width <= 0) or
+    (Height <= 0) then
+    Exit;
+  Color := StyleColor(Edge.Owner, ColorIds[Edge.Side]);
+  if AlphaOf(Color) = 0 then
+    Exit;
+  if (Edge.Style = kwDouble) and (Edge.Width >= 3) then
+  begin
+    Third := Floor(Edge.Width / 3 + 0.5);
+    if Horizontal then
+    begin
+      Entry := Builder.List.Add(diRectangle, Left, Top, Width, Third, Table);
+      Entry^.Color := Color;
+      Entry := Builder.List.Add(diRectangle, Left, Top + Height - Third, Width, Third, Table);
+    end
+    else
+    begin
+      Entry := Builder.List.Add(diRectangle, Left, Top, Third, Height, Table);
+      Entry^.Color := Color;
+      Entry := Builder.List.Add(diRectangle, Left + Width - Third, Top, Third, Height, Table);
+    end;
+    Entry^.Color := Color;
+    Exit;
+  end;
+  Entry := Builder.List.Add(diRectangle, Left, Top, Width, Height, Table);
+  Entry^.Color := Color;
+end;
+
+{ The collapsed borders of a table at (X, Y) over its cells' backgrounds:
+  each segment centred on its grid line (the larger half above or left),
+  vertical ones first, horizontal ones reaching over the crossings. }
+procedure PaintCollapsedBorders(var Builder: TBuilder; Table: TLayoutBox; X, Y: Single);
+var
+  Borders: TCollapsedBorders;
+  Row, Column: Integer;
+  Edge: TCollapsedEdge;
+  Line, Start, Stop, Before, After: Single;
+
+  function CrossingWidth(LineRow, LineColumn: Integer): Single;
+  begin
+    Result := 0;
+    if LineRow > 0 then
+      Result := Max(Result, Borders.VerticalAt(LineRow - 1, LineColumn).Width);
+    if LineRow < Borders.RowCount then
+      Result := Max(Result, Borders.VerticalAt(LineRow, LineColumn).Width);
+  end;
+
+begin
+  if not IsVisible(Table) or not (Table is TTableBox) then
+    Exit;
+  Borders := TCollapsedBorders(TTableBox(Table).CollapsedEdges);
+  if (Borders = nil) or (Length(Borders.RowLines) <> Borders.RowCount + 1) or
+    (Length(Borders.ColumnLines) <> Borders.ColumnCount + 1) then
+    Exit;
+  for Row := 0 to Borders.RowCount - 1 do
+    for Column := 0 to Borders.ColumnCount do
+    begin
+      Edge := Borders.VerticalAt(Row, Column);
+      Line := X + Borders.ColumnLines[Column];
+      Start := Y + Borders.RowLines[Row];
+      Stop := Y + Borders.RowLines[Row + 1];
+      AddCollapsedEdge(Builder, Table, Edge, Line - LeadingHalf(Edge.Width), Start, Edge.Width, Stop - Start, False);
+    end;
+  for Row := 0 to Borders.RowCount do
+    for Column := 0 to Borders.ColumnCount - 1 do
+    begin
+      Edge := Borders.HorizontalAt(Row, Column);
+      Line := Y + Borders.RowLines[Row];
+      Before := CrossingWidth(Row, Column);
+      After := CrossingWidth(Row, Column + 1);
+      Start := X + Borders.ColumnLines[Column] - LeadingHalf(Before);
+      Stop := X + Borders.ColumnLines[Column + 1] + TrailingHalf(After);
+      AddCollapsedEdge(Builder, Table, Edge, Start, Line - LeadingHalf(Edge.Width), Stop - Start, Edge.Width, True);
+    end;
+end;
+
 procedure WalkFlow(var Builder: TBuilder; Box: TLayoutBox; X, Y: Single; Phase: TPhase);
 var
   Child: TLayoutBox;
@@ -1054,6 +1145,8 @@ begin
     if Clips then
       PushOverflowClip(Builder, Child, ChildX, ChildY);
     WalkFlow(Builder, Child, ChildX, ChildY, Phase);
+    if (Phase = phBlocks) and (Child.Kind = bkTable) and (bfCollapsedBorders in Child.Flags) then
+      PaintCollapsedBorders(Builder, Child, ChildX, ChildY);
     if Clips then
       Builder.List.Add(diPopClip, 0, 0, 0, 0, Child);
     Child := Child.NextSibling;
@@ -1567,6 +1660,8 @@ begin
   if ClipsOverflow then
     PushOverflowClip(Builder, Box, X, Y);
   WalkFlow(Builder, Box, X, Y, phBlocks);
+  if (Box.Kind = bkTable) and (bfCollapsedBorders in Box.Flags) then
+    PaintCollapsedBorders(Builder, Box, X, Y);
   WalkFlow(Builder, Box, X, Y, phFloats);
   WalkFlow(Builder, Box, X, Y, phInline);
   if ClipsOverflow then

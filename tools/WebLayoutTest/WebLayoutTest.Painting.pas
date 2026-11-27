@@ -36,6 +36,8 @@ procedure CheckShadowPainting;
 procedure CheckFilterPainting;
 procedure CheckLayerPainting;
 procedure CheckGaugePainting;
+procedure CheckSnappedPainting;
+procedure CheckCollapsedBorderPainting;
 procedure ReportPerformance;
 
 implementation
@@ -89,6 +91,15 @@ const
     '<div><meter value=0.25 style="width:100px;height:16px;display:block"></meter></div>' +
     '<div><progress value=3 max=4 style="width:100px;height:16px;display:block"></progress></div>' +
     '</body>';
+
+  { A bordered box over a red one of the same size at y 10.4 (a
+    fractional position, as below a line of normal line-height): the
+    border's edges snap to device pixels like the background's, so no
+    red shows at them (WPT's margin-padding-clear tests). }
+  SnappedPage =
+    '<!doctype html><body style="margin:0;background:#ffffff"><div style="height:10.4px"></div>' +
+    '<div style="position:relative"><div style="position:absolute;width:40px;height:20px;border:4px solid #ff0000">' +
+    '</div><div style="position:absolute;width:40px;height:20px;border:4px solid #008000"></div></div></body>';
 
   { A box shadow's blur and translucent text are blended in pixel values
     as other browsers do (a 0.2 black shadow 8px down with a 23px blur
@@ -188,6 +199,65 @@ begin
   finally
     FreeSurface(Surface);
     FreeSurface(Partial);
+    Painter.Free;
+    FreeLayout(Layout, Document);
+  end;
+end;
+
+procedure CheckSnappedPainting;
+var
+  Document: TDocument;
+  Layout: TDocumentLayout;
+  Painter: TDocumentPainter;
+  Surface: TSurface;
+  X, Y: Integer;
+  Clean: Boolean;
+begin
+  Layout := LayoutText(SnappedPage, 100, Document);
+  Painter := TDocumentPainter.Create(Layout);
+  CreateSurface(Surface, 100, 60, ColorBlack);
+  try
+    Painter.Paint(Surface, MakeRectangle(0, 0, 100, 60));
+    Clean := True;
+    for Y := 0 to 59 do
+      for X := 0 to 99 do
+        if RedOf(PixelAt(Surface, X, Y)) > GreenOf(PixelAt(Surface, X, Y)) + 8 then
+          Clean := False;
+    Check(Clean, 'paint: border edges snap to device pixels (no red under a box at y 10.4)');
+    CheckPixel(Surface, 20, 10, RgbColor(0, 128, 0), 'snapped border: the top edge at y 10');
+    CheckPixel(Surface, 20, 9, RgbColor(255, 255, 255), 'snapped border: nothing above it');
+  finally
+    FreeSurface(Surface);
+    Painter.Free;
+    FreeLayout(Layout, Document);
+  end;
+end;
+
+{ Collapsed table borders are painted by the table, each edge in the
+  winning border's color over the cells' backgrounds. }
+procedure CheckCollapsedBorderPainting;
+const
+  Page = '<!doctype html><body style="margin:10px"><table id=bt style="border-collapse:collapse;border:6px solid #0000ff">' +
+    '<tr><td id=b1 style="border:2px solid #ff0000;width:50px;height:30px;padding:0"></td>' +
+    '<td id=b2 style="border:4px solid #008000;width:50px;height:30px;padding:0;background:#ffff00"></td></tr>' +
+    '<tr><td id=b3 colspan=2 style="border:1px solid #000000;height:20px;padding:0"></td></tr></table></body>';
+var
+  Document: TDocument;
+  Layout: TDocumentLayout;
+  Painter: TDocumentPainter;
+  Surface: TSurface;
+begin
+  Layout := LayoutText(Page, 200, Document);
+  Painter := TDocumentPainter.Create(Layout);
+  CreateSurface(Surface, 200, 100, ColorBlack);
+  try
+    Painter.Paint(Surface, MakeRectangle(0, 0, 200, 100));
+    CheckPixel(Surface, 11, 30, RgbColor(0, 0, 255), 'collapsed borders: the table''s outer edge');
+    CheckPixel(Surface, 67, 30, RgbColor(0, 128, 0), 'collapsed borders: the wider cell border wins the edge');
+    CheckPixel(Surface, 40, 47, RgbColor(255, 0, 0), 'collapsed borders: the red edge over the cell below');
+    CheckPixel(Surface, 90, 30, RgbColor(255, 255, 0), 'collapsed borders: the cell''s background inside');
+  finally
+    FreeSurface(Surface);
     Painter.Free;
     FreeLayout(Layout, Document);
   end;

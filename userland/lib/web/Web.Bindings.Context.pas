@@ -1163,7 +1163,7 @@ begin
   case Node.NodeType of
     NodeTypeElement:
       begin
-        if TElement(Node).NamespaceId = NamespaceSvg then
+        if TElement(Node).IsSvg then
           Exit(SvgInterfaceOf(Node.LocalNameAtom));
         if not TElement(Node).IsHtml then
           Exit(InterfaceElement);

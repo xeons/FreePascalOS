@@ -139,6 +139,9 @@ type
 var
   { Where the system's fonts are. }
   WebFontDirectory: string = '/lib/fonts';
+  { A second directory of families (one subdirectory each) beside the
+    system's, the user's own fonts; '' for none. }
+  WebUserFontDirectory: string = '';
 
 { The process's font library (made from WebFontDirectory when first used). }
 function WebFontLibrary: TFontLibrary;
@@ -164,6 +167,8 @@ begin
   begin
     SharedLibrary := TFontLibrary.Create;
     SharedLibrary.AddDirectory(WebFontDirectory);
+    if WebUserFontDirectory <> '' then
+      SharedLibrary.AddDirectory(WebUserFontDirectory);
   end;
   Result := SharedLibrary;
 end;

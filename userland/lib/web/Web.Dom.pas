@@ -525,6 +525,8 @@ type
     destructor Destroy; override;
     { Atoms and namespace ids (the fast path for the parser and CSS). }
     function IsHtml: Boolean; inline;
+    { In the SVG namespace, with any prefix ("svg:rect" in XHTML too). }
+    function IsSvg: Boolean; inline;
     function IsHtmlElement(Name: TAtom): Boolean; inline;
     function NamespaceAtom: TAtom; inline;
     function AttributeIndexOf(LocalAtom: TAtom; Namespace: TNamespaceId = NamespaceNone): Integer;

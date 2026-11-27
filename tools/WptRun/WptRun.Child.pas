@@ -18,7 +18,7 @@
 
 {
   One test in its own process (wptrun --child URL --seconds S --trust-ca
-  FILE [-f FONTDIR]): a webbrowse session (WebBrowse.Session, the real
+  FILE [-f FONTDIR] [--user-fonts DIR]): a webbrowse session (WebBrowse.Session, the real
   pipeline on host sockets) with the test domains mapped to 127.0.0.1
   and WPT's CA trusted, the console echoed on standard output, done when
   the harness prints its report (WptRun.Results.ResultMarker) or the
@@ -81,6 +81,11 @@ begin
     begin
       Inc(Index);
       Options.FontDirectory := ParamStr(Index);
+    end
+    else if (Argument = '--user-fonts') and (Index < ParamCount) then
+    begin
+      Inc(Index);
+      Options.UserFontDirectory := ParamStr(Index);
     end;
     Inc(Index);
   end;

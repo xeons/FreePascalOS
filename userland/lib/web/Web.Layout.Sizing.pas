@@ -72,8 +72,12 @@ end;
 
 function FixedBorderPadding(Box: TLayoutBox): Single;
 begin
-  Result := Box.Style.Value(cpBorderLeftWidth)^.Number + Box.Style.Value(cpBorderRightWidth)^.Number +
-    Abs(FixedLength(Box, cpPaddingLeft)) + Abs(FixedLength(Box, cpPaddingRight));
+  { A cell of a table with collapsing borders: its halves of the edges. }
+  if (bfCollapsedBorders in Box.Flags) and (Box is TTableCellBox) then
+    Result := TTableCellBox(Box).CollapsedBorder[sideLeft] + TTableCellBox(Box).CollapsedBorder[sideRight]
+  else
+    Result := Box.Style.Value(cpBorderLeftWidth)^.Number + Box.Style.Value(cpBorderRightWidth)^.Number;
+  Result := Result + Abs(FixedLength(Box, cpPaddingLeft)) + Abs(FixedLength(Box, cpPaddingRight));
 end;
 
 function EdgeOfStyle(Box: TLayoutBox; Start: Boolean): Single;

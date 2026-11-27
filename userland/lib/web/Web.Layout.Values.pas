@@ -68,6 +68,14 @@ function ClampWidth(Box: TLayoutBox; Width, ContainingWidth: Double): Double;
 function ClampHeight(Box: TLayoutBox; Height, ContainingHeight: Double): Double;
 
 { The used line-height in px for a style and its font. }
+{ The preferred aspect ratio (width / height) of a box that is not
+  replaced, from aspect-ratio ("auto <ratio>" is the ratio too); False
+  for auto or a ratio with a zero side. }
+function PreferredAspectRatio(Style: TCssComputedStyle; out Ratio: Double): Boolean;
+{ The border box height a ratio gives a box Width wide (border box), or
+  the reverse, aspect-ratio applying to the box-sizing box. }
+function HeightFromRatio(Box: TLayoutBox; Width, Ratio: Double): Double;
+function WidthFromRatio(Box: TLayoutBox; Height, Ratio: Double): Double;
 function UsedLineHeight(Style: TCssComputedStyle): Double;
 function DisplayKeyword(Style: TCssComputedStyle): TCssKeyword;
 { Whether overflow clips (x or y not visible). }
@@ -82,7 +90,49 @@ function HasMaskImage(Style: TCssComputedStyle): Boolean;
 implementation
 
 uses
-  Css.Values, Web.Text.FontInstances;
+  Math, Css.Values, Web.Text.FontInstances;
+
+function PreferredAspectRatio(Style: TCssComputedStyle; out Ratio: Double): Boolean;
+var
+  Value: PCssComputedValue;
+  Data: TCssValue;
+begin
+  Result := False;
+  Ratio := 0;
+  Value := Style.Value(cpAspectRatio);
+  if (Value^.Kind <> cvValue) or (Value^.Data = nil) then
+    Exit;
+  Data := Value^.Data;
+  if (Data.Kind = vkList) and (Data.Separator = lsSpace) and (Data.Count = 2) then
+  begin
+    if Data.Items[0].Kind = vkList then
+      Data := Data.Items[0]
+    else
+      Data := Data.Items[1];
+  end;
+  if (Data.Kind <> vkList) or (Data.Separator <> lsSlash) or (Data.Count <> 2) then
+    Exit;
+  if (Data.Items[0].Number <= 0) or (Data.Items[1].Number <= 0) then
+    Exit;
+  Ratio := Data.Items[0].Number / Data.Items[1].Number;
+  Result := True;
+end;
+
+function HeightFromRatio(Box: TLayoutBox; Width, Ratio: Double): Double;
+begin
+  if Box.Style.Keyword(cpBoxSizing) = kwBorderBox then
+    Result := Width / Ratio
+  else
+    Result := Max(0, Width - HorizontalBorderPadding(Box)) / Ratio + VerticalBorderPadding(Box);
+end;
+
+function WidthFromRatio(Box: TLayoutBox; Height, Ratio: Double): Double;
+begin
+  if Box.Style.Keyword(cpBoxSizing) = kwBorderBox then
+    Result := Height * Ratio
+  else
+    Result := Max(0, Height - VerticalBorderPadding(Box)) * Ratio + HorizontalBorderPadding(Box);
+end;
 
 function IsAutoValue(Style: TCssComputedStyle; Id: TCssPropertyId): Boolean;
 begin
@@ -154,6 +204,19 @@ begin
   Box.Border[sideRight] := Style.Value(cpBorderRightWidth)^.Number;
   Box.Border[sideBottom] := Style.Value(cpBorderBottomWidth)^.Number;
   Box.Border[sideLeft] := Style.Value(cpBorderLeftWidth)^.Number;
+  { Collapsing table borders: halves of the edges, and no padding on the
+    table (CSS 2.2 17.6.2). }
+  if bfCollapsedBorders in Box.Flags then
+    if Box is TTableCellBox then
+      Box.Border := TTableCellBox(Box).CollapsedBorder
+    else if Box is TTableBox then
+    begin
+      Box.Border := TTableBox(Box).CollapsedBorder;
+      Box.Padding[sideTop] := 0;
+      Box.Padding[sideRight] := 0;
+      Box.Padding[sideBottom] := 0;
+      Box.Padding[sideLeft] := 0;
+    end;
 end;
 
 function HorizontalEdges(Box: TLayoutBox): Double;
