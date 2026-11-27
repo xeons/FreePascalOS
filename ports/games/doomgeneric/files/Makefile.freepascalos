@@ -16,16 +16,15 @@
 
 # Builds doomgeneric for FreePascalOS: upstream's engine files (the list
 # of its own Makefile, less the X11 platform file), Chocolate Doom's OPL
-# music (CHOCOLATE_DOOM_DIRECTORY: its release unpacked) and the
-# platform layer kept in the port's files/ (PLATFORM_DIRECTORY). Run in
+# music (kept in the port's files/chocolate-doom) and the platform layer
+# kept in the port's files/ (PLATFORM_DIRECTORY). Run in
 # doomgeneric's source folder with CC, CFLAGS and LDFLAGS from the
 # ports tool's C toolchain:
 #
-#   make -f .../Makefile.freepascalos PLATFORM_DIRECTORY=.../files \
-#       CHOCOLATE_DOOM_DIRECTORY=.../chocolate-doom-3.1.1
+#   make -f .../Makefile.freepascalos PLATFORM_DIRECTORY=.../files
 
 PLATFORM_DIRECTORY ?= .
-CHOCOLATE_DOOM_DIRECTORY ?= ../chocolate-doom/chocolate-doom-chocolate-doom-3.1.1
+CHOCOLATE_DOOM_DIRECTORY ?= $(PLATFORM_DIRECTORY)/chocolate-doom
 OUTPUT := doom
 OBJECT_DIRECTORY := build-freepascalos
 

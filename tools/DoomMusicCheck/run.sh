@@ -30,12 +30,12 @@ output=$root/build/doom-music-check
 port=$root/ports/games/doomgeneric
 tree=$(ls -d "$root"/build/amd64/ports/doomgeneric/work/doomgeneric-*/ 2>/dev/null | head -n 1)
 distfiles=${DISTDIR:-$HOME/Downloads/sources}
-if [ -z "$tree" ] || [ ! -d "$tree/chocolate-doom" ]; then
+if [ -z "$tree" ] || [ ! -d "$tree/doomgeneric" ]; then
 	echo "run: scripts/ports.py patch doomgeneric first" >&2
 	exit 2
 fi
 engine=$tree/doomgeneric
-chocolate=$(ls -d "$tree"/chocolate-doom/chocolate-doom-*/ | head -n 1)
+chocolate=$port/files/chocolate-doom
 mkdir -p "$output/music"
 
 if [ ! -f "$output/freedoom1.wad" ]; then

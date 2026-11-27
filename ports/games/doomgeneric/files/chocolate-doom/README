@@ -1,0 +1,24 @@
+Chocolate Doom's OPL music, kept with the doomgeneric port
+
+These files are from Chocolate Doom 3.1.1 (https://github.com/chocolate-doom/chocolate-doom,
+release tag chocolate-doom-3.1.1, commit 410d9685), GPL-2.0-or-later (COPYING.md here):
+
+  src/i_oplmusic.c, src/midifile.c, src/midifile.h
+                      the MUS/MIDI player that drives an OPL chip with the
+                      instruments of the WAD's GENMIDI lump
+  opl/opl.c, opl/opl.h, opl/opl_internal.h, opl/opl_queue.c, opl/opl_queue.h
+                      Chocolate Doom's OPL front end and its callback queue
+  opl/opl3.c, opl/opl3.h
+                      the Nuked OPL3 emulator (Alexey Khokholov), in the
+                      GPL-2.0-or-later version Chocolate Doom carries
+
+Changed for FreePascalOS (each change is inside #ifdef __freepascalos__):
+
+  opl/opl.c           no SDL; the driver list holds opl_freepascalos_driver,
+                      and OPL_Delay goes through it
+  opl/opl_internal.h  declares opl_freepascalos_driver and OPL_FreePascalOS_Delay
+  src/i_oplmusic.c    OPL3 by default (snd_dmxoption "-opl3")
+
+The FreePascalOS OPL driver that replaces Chocolate Doom's SDL one is
+../opl_freepascalos.c (ours, GPL-3.0-or-later). The other files are as
+released.

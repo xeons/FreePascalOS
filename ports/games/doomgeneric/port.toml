@@ -6,12 +6,12 @@
 # Doom engines can be ported beside it; the program is "doom". Game
 # data is not part of it: the freedoom port installs Freedoom's IWADs
 # where it looks for them. The music is Chocolate Doom's OPL player and
-# emulator, from a second source (Chocolate Doom's release).
+# emulator, kept in files/chocolate-doom (see its README).
 
 [port]
 name = "doomgeneric"
 version = "0.0.20261011"
-revision = 1
+revision = 2
 summary = "Doom, the 1993 first-person shooter, in a window"
 description = """
 doomgeneric is id Software's Doom engine (as Chocolate Doom keeps it,
@@ -42,7 +42,7 @@ voices) rather than an OPL3's.
 """
 homepage = "https://github.com/ozkl/doomgeneric"
 license = "GPL-2.0-or-later AND GPL-3.0-or-later"
-license_files = ["LICENSE", "chocolate-doom/chocolate-doom-chocolate-doom-3.1.1/COPYING.md", "port:files/COPYING"]
+license_files = ["LICENSE", "port:files/chocolate-doom/COPYING.md", "port:files/COPYING"]
 maintainer = "FreePascalOS ports"
 categories = ["games"]
 status = "untested"
@@ -55,8 +55,9 @@ Khokholov, in the GPL-2.0-or-later version Chocolate Doom carries) are
 GPL-2.0-or-later too. The platform layer in files/ (with its OPL driver,
 which replaces Chocolate Doom's SDL one) is GPL-3.0-or-later, so the
 program built from all of them is distributed under GPL-3.0. doomgeneric
-has no releases: its source is a pinned commit's archive; Chocolate
-Doom's is the archive of its release tag. Recommends freedoom (game
+has no releases: its source is a pinned commit's archive. Chocolate
+Doom's music files are kept with the port in files/chocolate-doom, with
+their licence and a README naming the release and the changes. Recommends freedoom (game
 data) but does not depend on it: any IWAD will do.
 """
 
@@ -67,18 +68,6 @@ sha256 = "26f8f60daa6c6e4d3c01e5eac9fb700d592dede803d13ac848154ff356b2a2e7"
 size = 3090826
 extract_dir = "doomgeneric-e257a09527062bfb986b6e5e0780839b6cbd5b71"
 
-# Chocolate Doom's OPL music (src/i_oplmusic.c, src/midifile.c and the
-# opl/ library with the Nuked OPL3 emulator): the release tag's archive,
-# unpacked inside doomgeneric's tree so the patches reach it. Only those
-# files are compiled (Makefile.freepascalos); its SDL driver is replaced
-# by files/opl_freepascalos.c.
-[[sources]]
-url = "https://github.com/chocolate-doom/chocolate-doom/archive/refs/tags/chocolate-doom-3.1.1.tar.gz"
-filename = "chocolate-doom-3.1.1.tar.gz"
-sha256 = "1edcc41254bdc194beb0d33e267fae306556c4d24110a1d3d3f865717f25da23"
-size = 2257534
-extract_dir = "doomgeneric-e257a09527062bfb986b6e5e0780839b6cbd5b71/chocolate-doom"
-
 [dependencies]
 host = ["make"]
 
@@ -88,7 +77,7 @@ toolchain = "c"
 
 [build.steps]
 build = [
-    "make -j${JOBS} -C doomgeneric -f ${FILES}/Makefile.freepascalos PLATFORM_DIRECTORY=${FILES} CHOCOLATE_DOOM_DIRECTORY=../chocolate-doom/chocolate-doom-chocolate-doom-3.1.1 CC=\"$CC\" CFLAGS=\"$CFLAGS\" LDFLAGS=\"$LDFLAGS\"",
+    "make -j${JOBS} -C doomgeneric -f ${FILES}/Makefile.freepascalos PLATFORM_DIRECTORY=${FILES} CC=\"$CC\" CFLAGS=\"$CFLAGS\" LDFLAGS=\"$LDFLAGS\"",
 ]
 install = [
     "mkdir -p ${STAGE}${PREFIX}/bin ${STAGE}${PREFIX}/app/doom",

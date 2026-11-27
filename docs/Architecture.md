@@ -14690,8 +14690,9 @@ without updating the sound. Without an audio output Doom plays
 silently.
 
 The music is Doom's OPL music, as an AdLib or Sound Blaster played it,
-from Chocolate Doom 3.1.1 (a second source of the port, unpacked inside
-doomgeneric's tree): `src/i_oplmusic.c` (MUS converted to MIDI by
+from Chocolate Doom 3.1.1 (kept with the port in
+`files/chocolate-doom`, with its licence and a README naming the
+release and the FreePascalOS changes): `src/i_oplmusic.c` (MUS converted to MIDI by
 doomgeneric's own `mus2mid.c`, read by `src/midifile.c`, played with the
 WAD's GENMIDI instruments with DMX's voice allocation for the game's
 version) on its `opl/` library (`opl.c`, `opl_queue.c` and the Nuked
