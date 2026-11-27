@@ -120,6 +120,7 @@ type
     FFrames: array of TElementFrame;
     FProviders: array of TElementImageProviderEntry;
     FListeners: array of TResourceListener;
+    FChangedImageElement: TElement;
     FOnImageNeeded: TImageNeededEvent;
     FOnImportsNeeded: TImportsNeededEvent;
     procedure Notify(Change: TResourceChange);
@@ -172,6 +173,9 @@ type
     { Forget what belongs to an element that left the document. }
     procedure ElementRemoved(Element: TElement);
     property Document: TDocument read FDocument;
+    { While listeners hear rcImages: the element whose image changed (nil
+      when it was a url() image). }
+    property ChangedImageElement: TElement read FChangedImageElement;
     property OnImageNeeded: TImageNeededEvent read FOnImageNeeded write FOnImageNeeded;
     property OnImportsNeeded: TImportsNeededEvent read FOnImportsNeeded write FOnImportsNeeded;
   end;
@@ -388,7 +392,12 @@ begin
     FElementImages[High(FElementImages)].NaturalWidth := NaturalWidth;
     FElementImages[High(FElementImages)].NaturalHeight := NaturalHeight;
   end;
-  Notify(rcImages);
+  FChangedImageElement := Element;
+  try
+    Notify(rcImages);
+  finally
+    FChangedImageElement := nil;
+  end;
 end;
 
 function TDocumentResources.ElementImageNaturalSize(Element: TElement; out Width, Height: Single): Boolean;

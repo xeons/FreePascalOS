@@ -493,7 +493,8 @@ begin
           if Cell^.Cell.FirstBaseline >= 0 then
             Offset := RowBaselines[Cell^.Row] - Cell^.Cell.FirstBaseline;
       end;
-    ShiftLayoutContents(Cell^.Cell, Offset);
+    { A cell whose layout was skipped has its contents moved already. }
+    ShiftLayoutContents(Cell^.Cell, Offset - Cell^.Cell.ContentShift);
   end;
   { Captions go outside the grid's border: above it (in the space added
     to the top margin) and below it. }

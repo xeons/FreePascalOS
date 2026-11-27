@@ -115,14 +115,13 @@ begin
     Result := LengthOf(Style, Id, Basis);
 end;
 
-{ Lays out an item with its main size (and cross size if given) fixed. }
-procedure LayItemOut(var State: TFlexState; var Item: TFlexItem; MainSize, CrossSize: Single);
+{ The input an item is laid out with: its main size (and cross size if
+  given) fixed. }
+function ItemInput(const State: TFlexState; MainSize, CrossSize: Single): TLayoutInput;
 var
   ChildInput: TLayoutInput;
-  Box: TLayoutBox;
   ContentHeight: Single;
 begin
-  Box := Item.Box;
   ContentHeight := Indefinite;
   if not State.Row and (State.InnerMain >= 0) then
     ContentHeight := State.InnerMain
@@ -148,7 +147,23 @@ begin
     end;
     ChildInput.FixedHeight := MainSize;
   end;
-  LayoutBox(Box, ChildInput);
+  Result := ChildInput;
+end;
+
+{ Lays out an item with its main size (and cross size if given) fixed. }
+procedure LayItemOut(var State: TFlexState; var Item: TFlexItem; MainSize, CrossSize: Single);
+begin
+  LayoutBox(Item.Box, ItemInput(State, MainSize, CrossSize));
+end;
+
+{ Lays an item out only to measure it (Web.Layout.Dispatch's
+  MeasureBox): its border box height and baseline. }
+procedure MeasureItem(var State: TFlexState; var Item: TFlexItem; MainSize, CrossSize: Single;
+  out Height, Baseline: Single);
+var
+  Width: Single;
+begin
+  MeasureBox(Item.Box, ItemInput(State, MainSize, CrossSize), Width, Height, Baseline);
 end;
 
 procedure CollectItems(var State: TFlexState);
@@ -228,7 +243,7 @@ var
   Box: TLayoutBox;
   Style: TCssComputedStyle;
   Basis: PCssComputedValue;
-  Value, MinContent, MaxContent, Specified, Edges: Single;
+  Value, MinContent, MaxContent, Specified, Edges, Baseline: Single;
   HasBasis: Boolean;
   BorderBox: Boolean;
 begin
@@ -298,14 +313,10 @@ begin
         IntrinsicWidths(Box, MinContent, MaxContent);
         Value := MaxContent;
       end
+      else if State.Wraps then
+        MeasureItem(State, Item^, -1, -1, Value, Baseline)
       else
-      begin
-        if State.Wraps then
-          LayItemOut(State, Item^, -1, -1)
-        else
-          LayItemOut(State, Item^, -1, ColumnItemWidth(State, Item^, AlignOf(State.Box, Box)));
-        Value := Box.Height;
-      end;
+        MeasureItem(State, Item^, -1, ColumnItemWidth(State, Item^, AlignOf(State.Box, Box)), Value, Baseline);
     end;
     Item^.BaseSize := Value;
     { min/max main sizes, with the automatic minimum. }
@@ -511,6 +522,28 @@ begin
   until (Clamped = 0) or (Guard > 50);
 end;
 
+{ A row's item laid out for good: stretched to its line's cross size
+  when it stretches and was measured at another height, else as it was
+  measured (skipped when it was laid out so last). }
+procedure LayRowItemOut(var State: TFlexState; var Item: TFlexItem; LineCrossSize: Single);
+var
+  Stretched: Single;
+begin
+  if (Item.Align = kwStretch) and not Item.CrossAutoStart and not Item.CrossAutoEnd and
+     IsAutoValue(Item.Box.Style, cpHeight) then
+  begin
+    Stretched := ClampHeight(Item.Box, LineCrossSize - Item.CrossMarginStart - Item.CrossMarginEnd, State.InnerCross);
+    if Abs(Stretched - Item.CrossSize) > 0.01 then
+    begin
+      Item.CrossSize := Stretched;
+      LayItemOut(State, Item, Item.Target, Stretched);
+      Exit;
+    end;
+    Item.CrossSize := Stretched;
+  end;
+  LayItemOut(State, Item, Item.Target, -1);
+end;
+
 function ItemBaseline(Box: TLayoutBox; Row: Boolean): Single;
 begin
   if Box.FirstBaseline >= 0 then
@@ -576,16 +609,14 @@ begin
     Item := @State.Items[Index];
     Item^.Align := AlignOf(Box, Item^.Box);
     if State.Row then
-    begin
-      LayItemOut(State, Item^, Item^.Target, -1);
-      Item^.CrossSize := Item^.Box.Height;
-    end
+      { Laid out for good once its line's cross size is known. }
+      MeasureItem(State, Item^, Item^.Target, -1, Item^.CrossSize, Item^.Baseline)
     else
     begin
       LayItemOut(State, Item^, Item^.Target, ColumnItemWidth(State, Item^, Item^.Align));
       Item^.CrossSize := Item^.Box.Width;
+      Item^.Baseline := ItemBaseline(Item^.Box, State.Row);
     end;
-    Item^.Baseline := ItemBaseline(Item^.Box, State.Row);
   end;
   { Line cross sizes. }
   CrossTotal := 0;
@@ -665,20 +696,11 @@ begin
     for Index := Line^.First to Last do
     begin
       Item := @State.Items[Index];
-      if (Item^.Align = kwStretch) and not Item^.CrossAutoStart and not Item^.CrossAutoEnd then
+      if State.Row then
+        LayRowItemOut(State, Item^, Line^.CrossSize)
+      else if (Item^.Align = kwStretch) and not Item^.CrossAutoStart and not Item^.CrossAutoEnd then
       begin
-        if State.Row and IsAutoValue(Item^.Box.Style, cpHeight) then
-        begin
-          Stretched := ClampHeight(Item^.Box, Line^.CrossSize - Item^.CrossMarginStart - Item^.CrossMarginEnd,
-            State.InnerCross);
-          if Abs(Stretched - Item^.CrossSize) > 0.01 then
-          begin
-            Item^.Box.MarkNeedsLayout;
-            LayItemOut(State, Item^, Item^.Target, Stretched);
-          end;
-          Item^.CrossSize := Stretched;
-        end
-        else if not State.Row and IsAutoValue(Item^.Box.Style, cpWidth) then
+        if IsAutoValue(Item^.Box.Style, cpWidth) then
         begin
           Stretched := ClampWidth(Item^.Box, Line^.CrossSize - Item^.CrossMarginStart - Item^.CrossMarginEnd,
             Box.ContentWidth);

@@ -190,16 +190,31 @@ begin
 end;
 
 { White space processing of one text box: returns the processed text,
-  with #10 standing for each forced break. }
+  with #10 standing for each forced break. Written into a buffer sized
+  once for the source (it only grows for tabs), not appended to. }
 function ProcessWhiteSpace(var State: TCollectState; const Source: string; Mode: TCssKeyword): string;
 var
   Index, ByteCount, Spaces: Integer;
+  Used: SizeInt;
   CodePoint: LongWord;
   Collapse, KeepNewlines: Boolean;
+  Output: string;
+
+  procedure AppendSpaces(Count: Integer);
+  begin
+    while Count > 0 do
+    begin
+      AppendCodePoint(Output, Used, 32);
+      Dec(Count);
+    end;
+  end;
+
 begin
-  Result := '';
   Collapse := not KeywordIn(Mode, [kwPre, kwPreWrap, kwBreakSpaces]);
   KeepNewlines := not KeywordIn(Mode, [kwNormal, kwNowrap]);
+  Output := '';
+  SetLength(Output, Length(Source) + 4);
+  Used := 0;
   Index := 1;
   while Index <= Length(Source) do
   begin
@@ -211,9 +226,9 @@ begin
     begin
       { pre-line: spaces before a kept newline go. }
       if Collapse then
-        while (Length(Result) > 0) and (Result[Length(Result)] = ' ') do
-          SetLength(Result, Length(Result) - 1);
-      Result := Result + #10;
+        while (Used > 0) and (Output[Used] = ' ') do
+          Dec(Used);
+      AppendCodePoint(Output, Used, 10);
       State.PreviousSpace := Collapse;
       State.Column := 0;
       Continue;
@@ -222,7 +237,7 @@ begin
     begin
       if not State.PreviousSpace then
       begin
-        Result := Result + ' ';
+        AppendCodePoint(Output, Used, 32);
         State.PreviousSpace := True;
       end;
       Continue;
@@ -230,15 +245,17 @@ begin
     if (CodePoint = 9) and not Collapse then
     begin
       Spaces := 8 - (State.Column mod 8);
-      Result := Result + StringOfChar(' ', Spaces);
+      AppendSpaces(Spaces);
       Inc(State.Column, Spaces);
       State.PreviousSpace := False;
       Continue;
     end;
-    AppendCodePoint(Result, CodePoint);
+    AppendCodePoint(Output, Used, CodePoint);
     State.PreviousSpace := False;
     Inc(State.Column);
   end;
+  SetLength(Output, Used);
+  Result := Output;
 end;
 
 function BreakRulesOf(Style: TCssComputedStyle): TBreakRules;

@@ -20,7 +20,9 @@
   Answers to script's layout questions from a document layout (CSSOM View and
   getComputedStyle, libweb's TScriptLayout): every question first brings
   style and layout up to date (a synchronous layout, as browsers do when
-  script reads geometry), then reads the boxes. Its owner (the web view,
+  script reads geometry; nothing when nothing changed), then reads the
+  boxes. A computed value that does not depend on layout brings only the
+  styles up to date, as Gecko flushes only style for it. Its owner (the web view,
   webbrowse) points it at its
   current layout and painter (nil between documents: no boxes).
 }
@@ -41,6 +43,7 @@ type
   TDocumentScriptLayout = class(TScriptLayout)
   private
     function Ready: Boolean;
+    function StylesReady: Boolean;
   protected
     { Points Layout and Painter at the document's layout before a
       question (a frame's: Web.Frames.Views); the embedder's own sets
@@ -96,6 +99,14 @@ begin
   Result := Layout <> nil;
   if Result and Layout.NeedsUpdate then
     Layout.Update;
+end;
+
+function TDocumentScriptLayout.StylesReady: Boolean;
+begin
+  Resolve;
+  Result := Layout <> nil;
+  if Result then
+    Layout.UpdateStyles;
 end;
 
 { Where the box is drawn rather than laid out: moved by position:
@@ -453,24 +464,31 @@ var
   Style: TCssComputedStyle;
   Id: TCssPropertyId;
   Pseudo: TCssPseudoElement;
-  Valid: Boolean;
+  Valid, NeedsLayout: Boolean;
 begin
   Result := '';
-  if not Ready then
-    Exit;
   Pseudo := ParsePseudoArgument(PseudoElement, Valid);
   if not Valid then
+    Exit;
+  Id := PropertyByName(PropertyName);
+  if Id = cpInvalid then
+    Exit;
+  { Only the used width and height are read from the boxes. }
+  NeedsLayout := ((Id = cpWidth) or (Id = cpHeight)) and (Pseudo = peNone);
+  if NeedsLayout then
+  begin
+    if not Ready then
+      Exit;
+  end
+  else if not StylesReady then
     Exit;
   Style := Layout.Styler.StyleForScript(Element, Pseudo);
   if Style = nil then
     Exit;
   try
-    Id := PropertyByName(PropertyName);
     if Id = cpCustom then
       Exit(Style.CustomProperty(PropertyName));
-    if Id = cpInvalid then
-      Exit;
-    if ((Id = cpWidth) or (Id = cpHeight)) and (Pseudo = peNone) then
+    if NeedsLayout then
     begin
       Result := UsedSize(Layout.BoxOf(Element), Id);
       if Result <> '' then

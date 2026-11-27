@@ -60,6 +60,8 @@ type
     FKeptStyles: array of TCssComputedStyle;
     { The children BuildChildren took away, which boxes may be reused from. }
     FOldChildren: array of TLayoutBox;
+    { The box each of FOldChildren was taken from. }
+    FOldParents: array of TLayoutBox;
     FBuildDepth: Integer;
     { The images of inline <svg> elements. }
     FInlineSvgs: TInlineSvgImages;
@@ -119,6 +121,10 @@ implementation
 uses
   SysUtils, Web.Atoms, Css.Keywords, Css.PropertyIds, Css.ComputedValues, Web.Style.NodeData, Web.Layout.Values,
   Web.Dom.FormControls, Web.Layout.ViewportOverflow, Web.Layout.LineClamp;
+
+const
+  { Boxes whose children are fixed up for them (FixUp). }
+  FixedUpParentKinds = [bkFlex, bkGrid, bkTable, bkTableRowGroup, bkTableRow];
 
 var
   AtomCanvasElement, AtomIframeElement, AtomEmbedElement, AtomObjectElement, AtomVideoElement,
@@ -526,8 +532,9 @@ end;
 function TBoxTreeBuilder.TakeReusableBox(Node: TNode; Parent: TLayoutBox): TLayoutBox;
 var
   Data: PNodeData;
-  Index: Integer;
+  Index, OldIndex: Integer;
   OldParent: TLayoutBox;
+  KeptFlags: TBoxFlags;
 begin
   Result := nil;
   Data := ExistingNodeData(Node);
@@ -543,27 +550,38 @@ begin
   end
   else if Result.Style <> Data^.Style then
     Exit(nil);
-  if Parent.Kind in [bkFlex, bkGrid, bkTable, bkTableRowGroup, bkTableRow] then
-    Exit(nil);
   OldParent := Result.Parent;
-  if (OldParent <> nil) and (OldParent.Kind in [bkFlex, bkGrid, bkTable, bkTableRowGroup, bkTableRow]) then
+  OldIndex := -1;
+  if OldParent = nil then
+    for Index := 0 to High(FOldChildren) do
+      if FOldChildren[Index] = Result then
+      begin
+        OldIndex := Index;
+        Break;
+      end;
+  { The children of flex, grid and table boxes were fixed up for them
+    (blockified, wrapped): not moved to or from another parent. A flex
+    or grid box building its own children again takes back its items
+    (the same fix-up applies). }
+  if (Parent.Kind in FixedUpParentKinds) and
+     not ((Parent.Kind in [bkFlex, bkGrid]) and (OldIndex >= 0) and (FOldParents[OldIndex] = Parent)) then
+    Exit(nil);
+  if (OldParent <> nil) and (OldParent.Kind in FixedUpParentKinds) then
     Exit(nil);
   { Not one of the boxes being rebuilt's ancestors. }
   if (Result = Parent) then
     Exit(nil);
   if OldParent <> nil then
     OldParent.RemoveChild(Result)
-  else
-  begin
-    for Index := 0 to High(FOldChildren) do
-      if FOldChildren[Index] = Result then
-      begin
-        FOldChildren[Index] := nil;
-        Break;
-      end;
-  end;
+  else if OldIndex >= 0 then
+    FOldChildren[OldIndex] := nil;
+  { Its new ancestors are laid out again; the box itself only if it was
+    to be already (a new size or translation in its style), and what it
+    knew about itself (its measured size, that it has no counters) still
+    holds. }
+  KeptFlags := Result.Flags * [bfNeedsLayout, bfMeasured, bfCounterFree];
   Result.MarkNeedsLayout;
-  Result.Flags := Result.Flags - [bfNeedsLayout];
+  Result.Flags := Result.Flags - [bfNeedsLayout, bfMeasured, bfCounterFree] + KeptFlags;
 end;
 
 procedure TBoxTreeBuilder.AddNodeBox(Parent: TLayoutBox; Node: TNode);
@@ -666,14 +684,19 @@ begin
   { Take the children away (their boxes may be reused), build anew,
     then (at the outermost call) free what was not reused. }
   if FBuildDepth = 0 then
+  begin
     FOldChildren := nil;
+    FOldParents := nil;
+  end;
   Count := Length(FOldChildren);
   Child := Box.FirstChild;
   while Child <> nil do
   begin
     Next := Child.NextSibling;
     SetLength(FOldChildren, Count + 1);
+    SetLength(FOldParents, Count + 1);
     FOldChildren[Count] := Child;
+    FOldParents[Count] := Box;
     Inc(Count);
     Child.Parent := nil;
     Child.NextSibling := nil;
@@ -696,6 +719,7 @@ begin
         if FOldChildren[Index] <> nil then
           FreeBoxTree(FOldChildren[Index]);
       FOldChildren := nil;
+      FOldParents := nil;
     end;
   end;
 end;

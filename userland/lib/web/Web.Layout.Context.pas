@@ -72,6 +72,10 @@ type
 
 function SameLayoutInput(Box: TLayoutBox; const Input: TLayoutInput): Boolean;
 procedure RememberLayoutInput(Box: TLayoutBox; const Input: TLayoutInput);
+{ The same for the box's last measuring layout (Web.Layout.Dispatch's
+  MeasureBox). }
+function SameMeasureInput(Box: TLayoutBox; const Input: TLayoutInput): Boolean;
+procedure RememberMeasureInput(Box: TLayoutBox; const Input: TLayoutInput);
 
 implementation
 
@@ -98,16 +102,31 @@ begin
   end;
 end;
 
+function HeightKey(const Input: TLayoutInput): Single;
+begin
+  Result := Input.ContainingHeight + Input.FixedHeight * 3;
+end;
+
 function SameLayoutInput(Box: TLayoutBox; const Input: TLayoutInput): Boolean;
 begin
-  Result := (Box.LastAvailableWidth = InputKey(Input)) and
-    (Box.LastAvailableHeight = Input.ContainingHeight + Input.FixedHeight * 3);
+  Result := (Box.LastAvailableWidth = InputKey(Input)) and (Box.LastAvailableHeight = HeightKey(Input));
 end;
 
 procedure RememberLayoutInput(Box: TLayoutBox; const Input: TLayoutInput);
 begin
   Box.LastAvailableWidth := InputKey(Input);
-  Box.LastAvailableHeight := Input.ContainingHeight + Input.FixedHeight * 3;
+  Box.LastAvailableHeight := HeightKey(Input);
+end;
+
+function SameMeasureInput(Box: TLayoutBox; const Input: TLayoutInput): Boolean;
+begin
+  Result := (Box.MeasuredInputWidth = InputKey(Input)) and (Box.MeasuredInputHeight = HeightKey(Input));
+end;
+
+procedure RememberMeasureInput(Box: TLayoutBox; const Input: TLayoutInput);
+begin
+  Box.MeasuredInputWidth := InputKey(Input);
+  Box.MeasuredInputHeight := HeightKey(Input);
 end;
 
 end.

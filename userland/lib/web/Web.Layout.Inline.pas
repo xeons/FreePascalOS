@@ -96,6 +96,12 @@ type
       them a second time, or each new copy narrows the line again and
       the line moves down forever. }
     FloatsPlacedBefore: Integer;
+    { FinishLine's scratch, kept from line to line: each item's text
+      range and width once the line's edge spaces are dropped, its
+      baseline shift, and the inline boxes open. }
+    LineStarts, LineLengths: array of Integer;
+    LineWidths, LineShifts: array of Single;
+    LineFrames: array of TInlineFrame;
   end;
 
 function InlineItemsOf(Container: TLayoutBox): TInlineItems;
@@ -329,6 +335,31 @@ begin
   Result := StrutHeight;
 end;
 
+{ How many spaces a text box's text has in [Start, Start + Count). }
+function SpacesIn(Box: TLayoutBox; Start, Count: Integer): Integer;
+var
+  Index: Integer;
+begin
+  Result := 0;
+  for Index := Start to Start + Count - 1 do
+    if TTextBox(Box).Text[Index] = ' ' then
+      Inc(Result);
+end;
+
+{ FinishLine's scratch arrays, big enough for Count items. }
+procedure EnsureLineScratch(var State: TLineState; Count: Integer);
+begin
+  if Length(State.LineStarts) < Count then
+  begin
+    SetLength(State.LineStarts, Count * 2);
+    SetLength(State.LineLengths, Count * 2);
+    SetLength(State.LineWidths, Count * 2);
+    SetLength(State.LineShifts, Count * 2);
+  end;
+  if Length(State.LineFrames) < 8 then
+    SetLength(State.LineFrames, 8);
+end;
+
 { Writes the line of items [First, Last) at State.Y; returns its height
   (0 for a line with nothing to show). }
 function FinishLine(var State: TLineState; First, Last: Integer; LineLeft, LineRight: Single;
@@ -350,7 +381,6 @@ var
   StartsAt, Lengths: array of Integer;
   Widths: array of Single;
   Shifts: array of Single;
-  Text: string;
   ContentX: Single;
 
   procedure PushFrame(const Value: TInlineFrame);
@@ -374,10 +404,14 @@ begin
   Items := State.Items;
   Content := State.Content;
   ContentX := State.Container.ContentLeft;
-  SetLength(StartsAt, Last - First + 1);
-  SetLength(Lengths, Last - First + 1);
-  SetLength(Widths, Last - First + 1);
-  SetLength(Shifts, Last - First + 1);
+  { The state's arrays themselves (dynamic arrays are shared, not
+    copied, on assignment). }
+  EnsureLineScratch(State, Last - First + 1);
+  StartsAt := State.LineStarts;
+  Lengths := State.LineLengths;
+  Widths := State.LineWidths;
+  Shifts := State.LineShifts;
+  Frames := State.LineFrames;
   { Text ranges, with leading and trailing collapsible spaces dropped. }
   FirstText := -1;
   LastText := -1;
@@ -403,9 +437,8 @@ begin
   if (FirstText >= 0) and (Items.Items[FirstText].Kind = ikText) and Items.Items[FirstText].CollapsibleSpaces then
   begin
     Item := @Items.Items[FirstText];
-    Text := TTextBox(Item^.Box).Text;
     Skip := 0;
-    while (Skip < Item^.Length) and (Text[Item^.Start + Skip] = ' ') do
+    while (Skip < Item^.Length) and (TTextBox(Item^.Box).Text[Item^.Start + Skip] = ' ') do
       Inc(Skip);
     if Skip > 0 then
     begin
@@ -417,10 +450,9 @@ begin
   if (LastText >= 0) and (Items.Items[LastText].Kind = ikText) then
   begin
     Item := @Items.Items[LastText];
-    Text := TTextBox(Item^.Box).Text;
     Skip := 0;
     while (Skip < Lengths[LastText - First]) and
-          (Text[StartsAt[LastText - First] + Lengths[LastText - First] - 1 - Skip] = ' ') do
+          (TTextBox(Item^.Box).Text[StartsAt[LastText - First] + Lengths[LastText - First] - 1 - Skip] = ' ') do
       Inc(Skip);
     if (Skip > 0) and (Item^.CollapsibleSpaces or (Item^.Box.Style.Keyword(cpWhiteSpace) = kwPreWrap)) then
     begin
@@ -471,13 +503,7 @@ begin
       ikText:
         begin
           X := X + Widths[Index - First];
-          if Lengths[Index - First] > 0 then
-          begin
-            Text := TTextBox(Item^.Box).Text;
-            for Skip := StartsAt[Index - First] to StartsAt[Index - First] + Lengths[Index - First] - 1 do
-              if Text[Skip] = ' ' then
-                Inc(Spaces);
-          end;
+          Inc(Spaces, SpacesIn(Item^.Box, StartsAt[Index - First], Lengths[Index - First]));
         end;
       ikOpen:
         X := X + StartEdge(Item^.Box, State.ContentWidth);
@@ -505,7 +531,6 @@ begin
   TopRel := -(Root.Ascent + Root.HalfLeading);
   BottomRel := Root.Descent + Root.HalfLeading;
   FrameCount := 0;
-  SetLength(Frames, 8);
   PushFrame(Root);
   { The boxes open from earlier lines. }
   for Index := 0 to State.OpenCount - 1 do
@@ -646,11 +671,7 @@ begin
              MergesWithLast(Content, Item^.Box, StartsAt[Index - First], Shifts[Index - First]) then
           begin
             Fragment := @Content.Fragments[Content.FragmentCount - 1];
-            Text := TTextBox(Item^.Box).Text;
-            Spaces := 0;
-            for Skip := StartsAt[Index - First] to StartsAt[Index - First] + Lengths[Index - First] - 1 do
-              if Text[Skip] = ' ' then
-                Inc(Spaces);
+            Spaces := SpacesIn(Item^.Box, StartsAt[Index - First], Lengths[Index - First]);
             Fragment^.TextLength := Fragment^.TextLength + Lengths[Index - First];
             Fragment^.Width := Fragment^.Width + Widths[Index - First] + Spaces * SpaceExtra;
             X := X + Widths[Index - First] + Spaces * SpaceExtra;
@@ -668,11 +689,7 @@ begin
             Fragment^.Baseline := State.Container.ContentTop + BaselineY + Shifts[Index - First];
             Fragment^.LetterExtra := LengthOf(Item^.Box.Style, cpLetterSpacing, 0);
             Fragment^.SpaceExtra := SpaceExtra + LengthOf(Item^.Box.Style, cpWordSpacing, 0);
-            Text := TTextBox(Item^.Box).Text;
-            Spaces := 0;
-            for Skip := StartsAt[Index - First] to StartsAt[Index - First] + Lengths[Index - First] - 1 do
-              if Text[Skip] = ' ' then
-                Inc(Spaces);
+            Spaces := SpacesIn(Item^.Box, StartsAt[Index - First], Lengths[Index - First]);
             Fragment^.Width := Widths[Index - First] + Spaces * SpaceExtra;
             X := X + Fragment^.Width;
           end;
@@ -732,6 +749,8 @@ begin
     State.OpenBoxes[State.OpenCount] := Frame.Box;
     Inc(State.OpenCount);
   end;
+  { Frames may have grown. }
+  State.LineFrames := Frames;
   Line.FragmentCount := Content.FragmentCount - Line.FirstFragment;
   Content.AddLine(Line);
   if State.Container.FirstBaseline < 0 then
