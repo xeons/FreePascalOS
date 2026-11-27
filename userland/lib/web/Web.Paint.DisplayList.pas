@@ -153,6 +153,17 @@ type
     HasLeft, HasTop, HasRight, HasBottom: Boolean;
   end;
 
+  { What a push item's group draws, in the document coordinates of the
+    push (Web.Paint.GroupExtents). }
+  TGroupExtent = record
+    Left, Top, Right, Bottom: Single;
+    { False when not known: the origin moves inside (a fixed or sticky
+      subtree) or a filter spreads what is drawn. }
+    Bounded: Boolean;
+    { The matching pop (-1: the list ends first). }
+    PopIndex: Integer;
+  end;
+
   TDisplayList = class
   public
     Items: array of TDisplayItem;
@@ -183,6 +194,12 @@ type
     FilterCount: Integer;
     { The canvas color (the root's or body's background). }
     CanvasColor: TColor;
+    { Changes with every Clear and Add, unique among all lists: what is
+      worked out from a list is kept with the revision it was for. }
+    Revision: LongWord;
+    { Per item (meaningful at push items), for GroupExtentsRevision. }
+    GroupExtents: array of TGroupExtent;
+    GroupExtentsRevision: LongWord;
     procedure Clear;
     function Add(Kind: TDisplayItemKind; X, Y, Width, Height: Single; Box: TLayoutBox): PDisplayItem;
     function AddRadii(const Value: TCornerRadii): Integer;
@@ -202,8 +219,18 @@ type
 
 implementation
 
+var
+  LastRevision: LongWord = 0;
+
+procedure NextRevision(List: TDisplayList); inline;
+begin
+  Inc(LastRevision);
+  List.Revision := LastRevision;
+end;
+
 procedure TDisplayList.Clear;
 begin
+  NextRevision(Self);
   Count := 0;
   RadiusCount := 0;
   BorderCount := 0;
@@ -220,6 +247,7 @@ end;
 
 function TDisplayList.Add(Kind: TDisplayItemKind; X, Y, Width, Height: Single; Box: TLayoutBox): PDisplayItem;
 begin
+  NextRevision(Self);
   if Count >= Length(Items) then
     SetLength(Items, Count * 2 + 64);
   Result := @Items[Count];
@@ -339,7 +367,8 @@ begin
   Result := PtrUInt(Length(Items)) * SizeOf(TDisplayItem) + PtrUInt(Length(Radii)) * SizeOf(TCornerRadii) +
     PtrUInt(Length(Borders)) * SizeOf(TBorderSides) + PtrUInt(Length(Texts)) * SizeOf(TTextRun) +
     PtrUInt(Length(Images)) * SizeOf(TImageRun) + PtrUInt(Length(Gradients)) * SizeOf(TGradientRun) +
-    PtrUInt(Length(Shadows)) * SizeOf(TShadowRun) + PtrUInt(Length(Stickies)) * SizeOf(TStickyRun);
+    PtrUInt(Length(Shadows)) * SizeOf(TShadowRun) + PtrUInt(Length(Stickies)) * SizeOf(TStickyRun) +
+    PtrUInt(Length(GroupExtents)) * SizeOf(TGroupExtent);
 end;
 
 end.
