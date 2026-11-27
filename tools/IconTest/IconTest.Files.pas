@@ -54,7 +54,7 @@ const
     overlays, the message boxes' signs, the taskbar's pictures, the
     programs' icons, the toolbars' and the Start menu's), and the rest
     of the set's list. }
-  RequiredIcons: array[0..109] of string = (
+  RequiredIcons: array[0..110] of string = (
     'computer', 'home', 'network', 'internet', 'drive', 'drive-removable', 'drive-optical', 'drive-usb',
     'memory-card', 'drive-ssd', 'trash-empty', 'trash-full', 'applications', 'favourites', 'library',
     'folder', 'folder-open', 'folder-documents', 'folder-pictures', 'folder-music', 'folder-videos',
@@ -65,7 +65,7 @@ const
     'app-file-manager', 'app-terminal', 'app-text-editor', 'app-web-browser', 'app-mail', 'app-calendar',
     'app-contacts', 'app-media-player', 'app-image-viewer', 'app-paint', 'app-calculator', 'app-control-panel',
     'app-task-manager', 'app-help', 'app-system-info', 'app-volume-control', 'app-components', 'app-themes',
-    'app-dialogs', 'app-generic',
+    'app-dialogs', 'app-game', 'app-generic',
     'action-back', 'action-forward', 'action-up', 'action-refresh', 'action-delete', 'action-add',
     'action-remove', 'action-search', 'action-find', 'action-options', 'action-info', 'action-warning',
     'action-error', 'action-question', 'action-new', 'action-open', 'action-save', 'action-print', 'action-cut',

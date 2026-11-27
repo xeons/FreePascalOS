@@ -17,8 +17,8 @@
 """Programs: the file manager, terminal, text editor, web browser (Tuxcat), mail,
 calendar, contacts, media player, image viewer, paint, calculator, the
 Control Panel, task manager, help, system information, volume control,
-the controls' tour and demo, the dialogs, and a program of no icon of
-its own."""
+the controls' tour and demo, the dialogs, games, and a program of no
+icon of its own."""
 
 import math
 
@@ -296,6 +296,30 @@ def draw_dialogs(pen):
         face = projection.front_matrix(0)
         plane_shape(pen, face, rect_path(0.6, -19.4, 24.8, 5.0), pen.vertical(lighter(title, 0.3), title, -20, -14),
                     None)
+
+
+@icon('app-game', 'Game')
+def draw_game(pen):
+    # A game controller: a direction pad on the left of its face, four
+    # coloured buttons in a diamond on the right, a gold strip on top.
+    projection = Projection(3.0, 44.0)
+    width, depth, height = 36.0, 6.0, 24.0
+    box(pen, projection, width, depth, height, CHARCOAL, INK, top=GOLD_LIGHT, side='#262a33')
+    face = projection.front_matrix(0)
+    middle = -height / 2
+    arm = 3.6 if not pen.small else 4.6
+    reach = 12.0 if not pen.small else 14.0
+    pad_u = 10.0
+    plane_shape(pen, face, rect_path(pad_u - reach / 2, middle - arm / 2, reach, arm, 0.6), '#14171d', None)
+    plane_shape(pen, face, rect_path(pad_u - arm / 2, middle - reach / 2, arm, reach, 0.6), '#14171d', None)
+    buttons = ((26.0, middle - 4.2, GREEN), (30.2, middle, RED), (26.0, middle + 4.2, BLUE), (21.8, middle, GOLD))
+    radius = 2.2
+    if pen.small:
+        buttons = ((25.0, middle - 3.5, GREEN), (29.0, middle + 3.5, RED))
+        radius = 3.0
+    for u, v, colour in buttons:
+        x, y = face.transform_point(u, v)
+        sphere(pen, x, y, radius, colour)
 
 
 @icon('app-generic', 'Program')

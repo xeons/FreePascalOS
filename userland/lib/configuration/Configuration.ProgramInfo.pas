@@ -18,7 +18,8 @@
 
 {
   A program's description: the program.info file in its folder
-  (/app/notepad/program.info), written as a settings file
+  (/app/notepad/program.info, or /usr/local/app/NAME/program.info for a
+  port's program), written as a settings file
   (Configuration.Documents, Configuration.Values) with one section:
 
     [Program]
@@ -56,6 +57,10 @@ const
   { The same as Sys.ProgramFolders' (libsystem), which this host-built
     unit cannot use. }
   DefaultProgramFoldersRoot = '/app';
+  { Where ported software's programs describe themselves (a port's
+    package installs /usr/local/app/NAME/program.info: ports may install
+    only under /usr/local). }
+  PortProgramFoldersRoot = '/usr/local/app';
   ProgramInfoFileName = 'program.info';
   { The folder of a program's own icons, NAME.ico as in the theme. }
   ProgramIconFolderName = 'icons';

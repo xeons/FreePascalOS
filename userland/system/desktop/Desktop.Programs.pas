@@ -106,7 +106,7 @@ var
   Skipped: TProgramFolderProblems;
   Index: LongInt;
 begin
-  Found := ShownPrograms(DiscoverPrograms(DefaultProgramFoldersRoot, Skipped));
+  Found := ShownPrograms(DiscoverInstalledPrograms(Skipped));
   for Index := 0 to High(Skipped) do
     Say('skipped program folder ' + Skipped[Index].Folder + ': ' + Skipped[Index].Problem);
   SetLength(DesktopPrograms, Length(Found));
