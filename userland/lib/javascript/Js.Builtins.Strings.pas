@@ -55,6 +55,9 @@ procedure InstallString(R: TJsInterpreterRealm);
   part); NamedGroups is undefined or an object. }
 function GetSubstitution(R: TJsRealm; Matched, Text: TJsString; Position: Integer; const Captures: TJsValueList;
   NamedGroups: TJsValue; Replacement: TJsString): TJsString;
+{ Count units of the flat Text from Start: the shared strings when
+  that is none or one Latin-1 character. }
+function SubStringOf(R: TJsRealm; Text: TJsString; Start, Count: Integer): TJsString;
 
 implementation
 
@@ -62,6 +65,21 @@ uses
   Character,
   Js.CaseMapping,
   Js.Normalization;
+
+function SubStringOf(R: TJsRealm; Text: TJsString; Start, Count: Integer): TJsString;
+var
+  CodeUnit: Word;
+begin
+  if Count <= 0 then
+    Exit(R.Runtime.EmptyString);
+  if Count = 1 then
+  begin
+    CodeUnit := Text.CharAt(Start);
+    if CodeUnit < 256 then
+      Exit(R.Runtime.CharacterString(CodeUnit));
+  end;
+  Result := SubString(R.Heap, Text, Start, Count);
+end;
 
 function ThisString(R: TJsRealm; This: TJsValue; const Name: string): TJsString;
 begin
@@ -607,7 +625,7 @@ begin
     begin
       if Created.ArrayLength >= Limit then
         Break;
-      Created.CreateDataProperty(R, JsInteger(Index), JsStringValue(R.Runtime.CharacterString(Text.CharAt(Index))));
+      AppendElement(R, Created, JsStringValue(R.Runtime.CharacterString(Text.CharAt(Index))));
     end;
     Exit;
   end;
@@ -617,14 +635,12 @@ begin
     Found := StringIndexOf(Text, Separator, Position);
     if Found < 0 then
       Break;
-    Created.CreateDataProperty(R, JsInteger(Created.ArrayLength),
-      JsStringValue(SubString(R.Heap, Text, Position, Found - Position)));
+    AppendElement(R, Created, JsStringValue(SubStringOf(R, Text, Position, Found - Position)));
     if Created.ArrayLength >= Limit then
       Exit;
     Position := Found + Separator.Length;
   end;
-  Created.CreateDataProperty(R, JsInteger(Created.ArrayLength),
-    JsStringValue(SubString(R.Heap, Text, Position, Text.Length - Position)));
+  AppendElement(R, Created, JsStringValue(SubStringOf(R, Text, Position, Text.Length - Position)));
 end;
 
 { Delegates to Pattern[Symbol] when the pattern has that method:

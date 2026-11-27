@@ -85,6 +85,9 @@ function IteratorStep(R: TJsRealm; var Iterator: TJsIteratorRecord; out Value: T
 function IteratorClose(R: TJsRealm; Iterator: TJsValue; Quiet: Boolean): Boolean;
 function CreateIterResult(R: TJsRealm; Value: TJsValue; Done: Boolean): TJsValue;
 { Appends the values of an iterable to an array (spread). }
+{ CreateDataProperty at the array's length: stored directly while the
+  array is dense (an array being built). }
+procedure AppendElement(R: TJsRealm; Target: TJsArray; Value: TJsValue);
 function SpreadInto(R: TJsRealm; Target: TJsArray; Iterable: TJsValue): Boolean;
 function IterableToList(R: TJsRealm; Iterable: TJsValue; out Values: TJsValueList): Boolean;
 function CopyDataProperties(R: TJsRealm; Target: TJsObject; Source: TJsValue; Excluded: TJsObject): Boolean;

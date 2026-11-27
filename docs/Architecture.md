@@ -9131,9 +9131,13 @@ JavaScript, `Js.Builtins.SelfHosted`), iterator helpers
 (Iterator.prototype.map and the others, Iterator.from), Reflect, Proxy,
 Date (proleptic Gregorian arithmetic, ISO and toString/toUTCString
 parsing, en-US locale strings), RegExp (`Js.RegExpCompiler` and
-`Js.RegExpMatcher`: a backtracking matcher with an undo stack; named
-groups, back references, lookahead and lookbehind, the u, v, y, s, d, i,
-m, g flags, \p general categories and 38 scripts by their blocks),
+`Js.RegExpMatcher`: a backtracking matcher with an undo stack, a
+quantified single character run as a loop, a search that skips the
+positions where no match can begin (`Js.RegExpStartFilter`: first
+characters, ^ anchor, literal prefix), compiled programs shared by
+pattern and flags (`Js.RegExpCache`); named groups, back references,
+lookahead and lookbehind, the u, v, y, s, d, i, m, g flags, \p general
+categories and 38 scripts by their blocks),
 globalThis, the URI functions, parseInt/parseFloat, eval,
 queueMicrotask, console, Error.captureStackTrace and stackTraceLimit.
 Annex B: escape/unescape, the String HTML methods, __defineGetter__ and

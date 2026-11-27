@@ -31,7 +31,14 @@
 
   The program is an array of words: an instruction and its operands.
   Counted repetition keeps a counter per quantifier; the body of a loop
-  that matched the empty string ends the loop (no endless loops).
+  that matched the empty string ends the loop (no endless loops). A
+  quantified single character (a literal, a class or the dot) reading
+  forwards is one instruction: it never matches empty and has no
+  captures to reset, so the matcher runs it as a plain loop.
+
+  After compiling, Js.RegExpStartFilter works out where a match can
+  begin (the first characters, an anchor, a literal prefix) so that a
+  search skips the positions where no match can start.
 }
 unit Js.RegExpCompiler;
 
@@ -61,6 +68,9 @@ const
   RxMatch = 16;
   RxSavePosition = 17;   { position register }
   RxNamedBackReference = 18; { direction, first group, last group }
+  { atom (RxChar, RxAny or RxClass), its operand (code, unused or class
+    index), minimum, maximum (-1 none), greedy; forwards only }
+  RxCharRepeat = 19;
 
   ForwardDirection = 0;
   BackwardDirection = 1;
@@ -77,7 +87,14 @@ type
     Negated: Boolean;
   end;
 
+  { 256 bits: the membership of the Latin-1 characters. }
+  TRxLatinSet = array[0..7] of LongWord;
+
   TRxClass = class
+  private
+    FLatin: TRxLatinSet;
+    FPrepared: Boolean;
+    function TestMembership(Code: LongWord): Boolean;
   public
     Ranges: array of TRxRange;
     Properties: array of TRxProperty;
@@ -86,7 +103,13 @@ type
     procedure AddClass(Other: TRxClass);
     procedure AddProperty(Categories: LongWord; Negated_: Boolean);
     procedure Normalize;
-    function Contains(Code: LongWord): Boolean;
+    { Fills the Latin-1 set once the class is complete (the compiler
+      does it for every class of a program). }
+    procedure Prepare;
+    function Contains(Code: LongWord): Boolean; inline;
+    { Whether some character above U+00FF is a member. }
+    function HasMembersAboveLatin: Boolean;
+    property LatinSet: TRxLatinSet read FLatin;
   end;
 
   TRxGroupName = record
@@ -94,7 +117,22 @@ type
     Group: Integer;
   end;
 
+  { Where a match can begin, for the search to skip other positions. }
+  TRxStartFilter = record
+    { Only position 0 can match (^ without the m flag). }
+    Anchored: Boolean;
+    { Every match starts with a character of StartUnits: the first code
+      unit below 256 is in LatinUnits, or is above with HighUnits. }
+    HasStartUnits: Boolean;
+    LatinUnits: TRxLatinSet;
+    HighUnits: Boolean;
+    { Every match starts with these code units (empty when not known). }
+    Prefix: array of Word;
+  end;
+
   TRxProgram = class
+  private
+    FReferences: LongInt;
   public
     Code: array of LongInt;
     Classes: array of TRxClass;
@@ -106,6 +144,14 @@ type
     Multiline: Boolean;
     DotAll: Boolean;
     Unicode: Boolean;
+    StartFilter: TRxStartFilter;
+    { The matcher that runs the program for every regexp sharing it
+      (a TRxMatcher, made on first use; freed with the program). }
+    Matcher: TObject;
+    { A program is shared by the regexps compiled from the same pattern
+      and flags: it is created with one reference. }
+    procedure AddReference;
+    procedure Release;
     destructor Destroy; override;
     { The group of a name (several groups may share a name in
       different alternatives): -1 when none. }
@@ -123,7 +169,9 @@ function CompileRegExp(const Pattern: UnicodeString; IgnoreCase, Multiline, DotA
 procedure ValidateRegExp(const Pattern: UnicodeString; IgnoreCase, Unicode: Boolean);
 
 { Case mapping for case-insensitive matching. }
-function CanonicalizeCase(Code: LongWord; Unicode: Boolean): LongWord;
+function CanonicalizeCase(Code: LongWord; Unicode: Boolean): LongWord; inline;
+{ CanonicalizeCase of a character above ASCII. }
+function CanonicalCaseOutsideAscii(Code: LongWord; Unicode: Boolean): LongWord;
 function IsRxWordCharacter(Code: LongWord; IgnoreCase, Unicode: Boolean): Boolean;
 function CategoryMask(Code: LongWord): LongWord;
 
@@ -131,7 +179,8 @@ implementation
 
 uses
   Character,
-  Js.CaseMapping;
+  Js.CaseMapping,
+  Js.RegExpStartFilter;
 
 const
   { Scripts by their blocks (an approximation of the Script property:
@@ -244,17 +293,13 @@ begin
   Result := LongWord(1) shl Ord(Category);
 end;
 
-function CanonicalizeCase(Code: LongWord; Unicode: Boolean): LongWord;
+{ Case canonicalization of a BMP character outside ASCII, from the
+  Unicode tables (slow: CanonicalizeCase keeps the results by block). }
+function ComputeCanonicalCase(Code: LongWord; Unicode: Boolean): LongWord;
 var
   Mapped: UnicodeString;
 begin
-  if Code < 128 then
-  begin
-    if (Code >= Ord('a')) and (Code <= Ord('z')) then
-      Exit(Code - 32);
-    Exit(Code);
-  end;
-  if (Code > $FFFF) or IsSurrogateUnit(Code) then
+  if IsSurrogateUnit(Code) then
     Exit(Code);
   if Unicode then
   begin
@@ -268,6 +313,70 @@ begin
   if (Length(Mapped) <> 1) or ((Ord(Mapped[1]) < 128) and (Code >= 128)) then
     Exit(Code);
   Result := Ord(Mapped[1]);
+end;
+
+type
+  TCaseBlock = array[0..255] of Word;
+  PCaseBlock = ^TCaseBlock;
+
+var
+  { The canonical case of the BMP by blocks of 256, filled as they are
+    first needed (per u flag). Shared by every thread: a block is
+    published whole, and a thread that loses the race frees its copy. }
+  CaseBlocks: array[Boolean, 0..255] of PCaseBlock;
+
+function FillCaseBlock(Block: Integer; Unicode: Boolean): PCaseBlock;
+var
+  Index: Integer;
+  Code: LongWord;
+  Filled: PCaseBlock;
+begin
+  New(Filled);
+  for Index := 0 to 255 do
+  begin
+    Code := LongWord(Block shl 8 + Index);
+    if Code < 128 then
+      Filled^[Index] := CanonicalizeCase(Code, Unicode)
+    else
+      Filled^[Index] := ComputeCanonicalCase(Code, Unicode);
+  end;
+  Result := InterlockedCompareExchange(Pointer(CaseBlocks[Unicode, Block]), Filled, nil);
+  if Result = nil then
+    Result := Filled
+  else
+    Dispose(Filled);
+end;
+
+function CanonicalCaseOutsideAscii(Code: LongWord; Unicode: Boolean): LongWord;
+var
+  Block: PCaseBlock;
+begin
+  if Code > $FFFF then
+    Exit(Code);
+  Block := CaseBlocks[Unicode, Code shr 8];
+  if Block = nil then
+    Block := FillCaseBlock(Code shr 8, Unicode);
+  Result := Block^[Code and 255];
+end;
+
+function CanonicalizeCase(Code: LongWord; Unicode: Boolean): LongWord;
+begin
+  if Code >= 128 then
+    Exit(CanonicalCaseOutsideAscii(Code, Unicode));
+  if (Code >= Ord('a')) and (Code <= Ord('z')) then
+    Exit(Code - 32);
+  Result := Code;
+end;
+
+procedure FreeCaseBlocks;
+var
+  Unicode: Boolean;
+  Block: Integer;
+begin
+  for Unicode := False to True do
+    for Block := 0 to 255 do
+      if CaseBlocks[Unicode, Block] <> nil then
+        Dispose(CaseBlocks[Unicode, Block]);
 end;
 
 function IsRxWordCharacter(Code: LongWord; IgnoreCase, Unicode: Boolean): Boolean;
@@ -362,7 +471,7 @@ begin
   Ranges := Merged;
 end;
 
-function TRxClass.Contains(Code: LongWord): Boolean;
+function TRxClass.TestMembership(Code: LongWord): Boolean;
 var
   Low, High, Middle, Index: Integer;
   Mask: LongWord;
@@ -397,12 +506,48 @@ begin
     Result := not Result;
 end;
 
+procedure TRxClass.Prepare;
+var
+  Code: LongWord;
+begin
+  FillChar(FLatin, SizeOf(FLatin), 0);
+  for Code := 0 to 255 do
+    if TestMembership(Code) then
+      FLatin[Code shr 5] := FLatin[Code shr 5] or (LongWord(1) shl (Code and 31));
+  FPrepared := True;
+end;
+
+function TRxClass.Contains(Code: LongWord): Boolean;
+begin
+  if (Code < 256) and FPrepared then
+    Result := (FLatin[Code shr 5] and (LongWord(1) shl (Code and 31))) <> 0
+  else
+    Result := TestMembership(Code);
+end;
+
+function TRxClass.HasMembersAboveLatin: Boolean;
+begin
+  Result := Negated or (Length(Properties) > 0) or ((Length(Ranges) > 0) and (Ranges[High(Ranges)].Last > 255));
+end;
+
 { TRxProgram }
+
+procedure TRxProgram.AddReference;
+begin
+  InterlockedIncrement(FReferences);
+end;
+
+procedure TRxProgram.Release;
+begin
+  if (Self <> nil) and (InterlockedDecrement(FReferences) = 0) then
+    Free;
+end;
 
 destructor TRxProgram.Destroy;
 var
   Index: Integer;
 begin
+  Matcher.Free;
   for Index := 0 to High(Classes) do
     Classes[Index].Free;
   inherited Destroy;
@@ -489,6 +634,7 @@ type
     function AddClass(Target: TRxClass): Integer;
     function GroupsIn(Node: TRxNode; out First, Last: Integer): Boolean;
     procedure Emit(Value: LongInt);
+    function GenerateCharacterRepeat(Node: TRxNode): Boolean;
     procedure Generate(Node: TRxNode; Direction: Integer);
   public
     constructor Create(const Pattern: UnicodeString; Target: TRxProgram);
@@ -1546,6 +1692,53 @@ begin
   FProgram.Code[Count] := Value;
 end;
 
+{ The single character a node matches (through non-capturing groups):
+  its instruction and operand. }
+function SingleCharacterAtom(Node: TRxNode; out Atom, Operand: LongInt): Boolean;
+begin
+  while (Node.Kind = rnGroup) and (Node.Group <= 0) and (Length(Node.Children) = 1) do
+    Node := Node.Children[0];
+  Result := True;
+  case Node.Kind of
+    rnChar:
+      begin
+        Atom := RxChar;
+        Operand := LongInt(Node.Code);
+      end;
+    rnAny:
+      begin
+        Atom := RxAny;
+        Operand := 0;
+      end;
+    rnClass:
+      begin
+        Atom := RxClass;
+        Operand := Node.ClassIndex;
+      end;
+  else
+    Result := False;
+  end;
+end;
+
+{ A quantified single character reading forwards as one instruction;
+  False for any other quantifier. }
+function TRxCompiler.GenerateCharacterRepeat(Node: TRxNode): Boolean;
+var
+  Atom, Operand: LongInt;
+begin
+  Result := SingleCharacterAtom(Node.Children[0], Atom, Operand);
+  if not Result then
+    Exit;
+  if (Atom = RxChar) and FIgnoreCase then
+    Operand := LongInt(CanonicalizeCase(LongWord(Operand), FUnicode));
+  Emit(RxCharRepeat);
+  Emit(Atom);
+  Emit(Operand);
+  Emit(Node.Minimum);
+  Emit(Node.Maximum);
+  Emit(Ord(Node.Greedy));
+end;
+
 procedure TRxCompiler.Generate(Node: TRxNode; Direction: Integer);
 var
   Index, SplitAt, JumpAt, Counter, PositionRegister, LoopHead, ExitPatch, First, Last: Integer;
@@ -1634,6 +1827,8 @@ begin
         end;
         if (Node.Maximum = 0) then
           Exit;
+        if (Direction = ForwardDirection) and GenerateCharacterRepeat(Node) then
+          Exit;
         Counter := FProgram.CounterCount;
         Inc(FProgram.CounterCount);
         PositionRegister := FProgram.PositionRegisterCount;
@@ -1717,6 +1912,7 @@ end;
 procedure TRxCompiler.Compile;
 var
   Root: TRxNode;
+  Index: Integer;
 begin
   ScanGroups;
   Root := ParseDisjunction;
@@ -1732,6 +1928,8 @@ begin
   finally
     Root.Free;
   end;
+  for Index := 0 to High(FProgram.Classes) do
+    FProgram.Classes[Index].Prepare;
 end;
 
 function CompileRegExp(const Pattern: UnicodeString; IgnoreCase, Multiline, DotAll, Unicode: Boolean): TRxProgram;
@@ -1739,6 +1937,7 @@ var
   Compiler: TRxCompiler;
 begin
   Result := TRxProgram.Create;
+  Result.FReferences := 1;
   Result.IgnoreCase := IgnoreCase;
   Result.Multiline := Multiline;
   Result.DotAll := DotAll;
@@ -1747,6 +1946,7 @@ begin
   try
     try
       Compiler.Compile;
+      ComputeStartFilter(Result);
     except
       Result.Free;
       raise;
@@ -1774,4 +1974,6 @@ begin
   end;
 end;
 
+finalization
+  FreeCaseBlocks;
 end.
