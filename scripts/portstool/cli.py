@@ -271,17 +271,43 @@ def command_lint(session, arguments):
     return 1 if errors else 0
 
 
+def _has_package(session, port):
+    return os.path.exists(os.path.join(session.layout.packages, port.package_file_name(session.layout.processor)))
+
+
 def command_install_to_image(session, arguments):
     names = list(arguments.ports)
+    companions = []
     if arguments.list:
-        names += image.read_list(arguments.list)
+        for entry in image.read_entries(arguments.list):
+            if entry.companion is None:
+                names.append(entry.name)
+            else:
+                companions.append(entry)
     os.makedirs(arguments.root, exist_ok=True)
+    if names:
+        status = run_phase(session, "package", names, with_run_dependencies=True,
+                           strict=False, keep_going=False)
+        if status:
+            return status
+    # A port that goes with another: built and installed only when the
+    # other's package could be built.
+    accompanying = []
+    listed = {session.find(name).name for name in names}
+    for entry in companions:
+        companion = session.find(entry.companion)
+        if companion.name not in listed or not _has_package(session, companion):
+            print(f"SKIP {entry.name}: goes with {entry.companion}, which is not going on the image")
+            continue
+        accompanying.append(entry.name)
+    if accompanying:
+        status = run_phase(session, "package", accompanying, with_run_dependencies=True,
+                           strict=False, keep_going=False)
+        if status:
+            return status
+    names += accompanying
     if not names:
         return 0
-    status = run_phase(session, "package", names, with_run_dependencies=True,
-                       strict=False, keep_going=False)
-    if status:
-        return status
     requested = _ports_from(session, names)
     epoch = max(1, int(os.environ.get("SOURCE_DATE_EPOCH", "1")))
     for port in Resolver(session.tree, kinds=("run",)).order(requested):

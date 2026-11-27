@@ -1692,8 +1692,23 @@ cortex-a72` (see "The AArch64 port" in docs/Architecture.md).
       sqlite3, then bash (committed, status "untested")
 - [x] The program loader finds shared libraries in /usr/local/lib after /lib
       (needed libraries and LoadLibrary by a bare name; coretest checks it)
-- [ ] Ported graphical programs: a package installing a program folder the
-      desktop finds (/usr/local/app or a second program folder root)
+- [x] Ported graphical programs: a package installs a program folder
+      (/usr/local/app/NAME/program.info) the desktop and Files list beside
+      /app's
+- [x] image.list: "PORT with OTHER" (data only with its program)
+- [x] Doom: games/doomgeneric (window, scaling, keys, sound effects through
+      /dev/audio) and games/freedoom (Phase 1 and 2 IWADs in
+      /usr/local/share/games/doom); built for x86-64 and AArch64
+- [ ] Doom: try it on the system and set both ports' status to "tested"
+- [ ] Doom: music (an OPL2/OPL3 emulator playing the MUS scores through
+      GENMIDI's instruments, as Chocolate Doom's music_opl_module; Nuked OPL3
+      is LGPL-2.1, DOSBox's dbopl GPL-2.0-or-later)
+- [ ] Doom: the mouse (pointer lock, RequestSetPointerLock, posted as
+      ev_mouse events), and an error box when no IWAD is found (I_Error
+      only writes to stderr, unseen from the Start menu)
+- [ ] Doom: Chocolate Doom (also Heretic, Hexen, Strife, network play)
+      or another SDL-based engine once there is an SDL2 port on the display
+      server (video, events, audio)
 - [ ] pkg: autoremove (packages installed as dependencies nothing needs
       any more), pkg fetch, a progress line while downloading
 - [ ] A public package repository with a signing key the system disk carries

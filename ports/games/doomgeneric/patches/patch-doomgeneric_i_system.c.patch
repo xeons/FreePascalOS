@@ -1,0 +1,24 @@
+--- a/doomgeneric/i_system.c
++++ b/doomgeneric/i_system.c
+@@ -261,6 +261,10 @@
+     SDL_Quit();
+ 
+     exit(0);
++#elif defined(__freepascalos__)
++    // FreePascalOS: quitting (the menu, the window's close button) ends
++    // the program, the exit functions having run.
++    exit(0);
+ #endif
+ }
+ 
+@@ -452,6 +456,10 @@
+     {
+         printf("%s\n", msgbuf);
+         exit(-1);
++    }
++#elif defined(__freepascalos__)
++    {
++        // FreePascalOS has no zenity: the message went to stderr.
+     }
+ 
+ #else

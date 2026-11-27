@@ -17,10 +17,12 @@
 }
 
 {
-  The installed graphical programs: every folder under /app with a
-  program.info (Configuration.ProgramInfo) that describes a program
-  whose executable is there. Folders that do not are left out (with why,
-  for whoever lists them).
+  The installed graphical programs: every folder under /app, and under
+  /usr/local/app (ported software's), with a program.info
+  (Configuration.ProgramInfo) that describes a program whose executable
+  is there. Folders that do not are left out (with why, for whoever
+  lists them). A port's folder named like one of /app's is left out
+  too: the system's own program keeps its name.
 
   The list is sorted as the Start menu shows it: by category
   (TProgramCategory's order), then by name. A program's icon is the
@@ -59,6 +61,12 @@ function ReadProgramFolder(const Path: string; out Info: TProgramInfo; out Probl
 { Every program under Root, sorted; the folders left out in Skipped. }
 function DiscoverPrograms(const Root: string; out Skipped: TProgramFolderProblems): TProgramList;
 function DiscoverPrograms(const Root: string = DefaultProgramFoldersRoot): TProgramList;
+{ Every program under the roots, sorted; a folder named like one of an
+  earlier root's is skipped. }
+function DiscoverProgramsIn(const Roots: array of string; out Skipped: TProgramFolderProblems): TProgramList;
+{ Every installed program: /app's and /usr/local/app's. }
+function DiscoverInstalledPrograms(out Skipped: TProgramFolderProblems): TProgramList;
+function DiscoverInstalledPrograms: TProgramList;
 { The programs that are not Hidden (for the menu and the desktop). }
 function ShownPrograms(const List: TProgramList): TProgramList;
 { The index of the program with that executable or folder name; -1. }
@@ -183,6 +191,53 @@ var
   Skipped: TProgramFolderProblems;
 begin
   Result := DiscoverPrograms(Root, Skipped);
+end;
+
+procedure AddSkipped(var Skipped: TProgramFolderProblems; const Folder, Problem: string);
+begin
+  SetLength(Skipped, Length(Skipped) + 1);
+  Skipped[High(Skipped)].Folder := Folder;
+  Skipped[High(Skipped)].Problem := Problem;
+end;
+
+function DiscoverProgramsIn(const Roots: array of string; out Skipped: TProgramFolderProblems): TProgramList;
+var
+  RootIndex, Index, Earlier: Integer;
+  Found: TProgramList;
+  RootSkipped: TProgramFolderProblems;
+begin
+  Result := nil;
+  Skipped := nil;
+  for RootIndex := 0 to High(Roots) do
+  begin
+    Found := DiscoverPrograms(Roots[RootIndex], RootSkipped);
+    for Index := 0 to High(RootSkipped) do
+      AddSkipped(Skipped, RootSkipped[Index].Folder, RootSkipped[Index].Problem);
+    for Index := 0 to High(Found) do
+    begin
+      Earlier := FindProgramByFolder(Result, Found[Index].FolderName);
+      if Earlier >= 0 then
+        AddSkipped(Skipped, Found[Index].Folder, 'named like ' + Result[Earlier].Folder)
+      else
+      begin
+        SetLength(Result, Length(Result) + 1);
+        Result[High(Result)] := Found[Index];
+      end;
+    end;
+  end;
+  SortPrograms(Result);
+end;
+
+function DiscoverInstalledPrograms(out Skipped: TProgramFolderProblems): TProgramList;
+begin
+  Result := DiscoverProgramsIn([DefaultProgramFoldersRoot, PortProgramFoldersRoot], Skipped);
+end;
+
+function DiscoverInstalledPrograms: TProgramList;
+var
+  Skipped: TProgramFolderProblems;
+begin
+  Result := DiscoverInstalledPrograms(Skipped);
 end;
 
 function ShownPrograms(const List: TProgramList): TProgramList;

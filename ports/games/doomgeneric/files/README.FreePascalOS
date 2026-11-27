@@ -1,0 +1,34 @@
+Doom on FreePascalOS
+====================
+
+doom is the doomgeneric engine in a window of the display server. It
+needs an IWAD, the game's data, and looks for one in, in this order:
+
+  1. the current folder
+  2. the folder (or the file) named by DOOMWADDIR
+  3. the folders of DOOMWADPATH (separated by colons)
+  4. /usr/local/share/games/doom
+  5. /usr/share/games/doom
+
+The freedoom package installs Freedoom (free game data, BSD licence) in
+/usr/local/share/games/doom:
+
+  doom                         Freedoom: Phase 1 (Doom's episodes)
+  doom -iwad freedoom2.wad     Freedoom: Phase 2 (Doom II's levels)
+
+Your own WADs: copy an IWAD you own (doom.wad, doom2.wad, plutonia.wad,
+tnt.wad, or the shareware doom1.wad) into /usr/local/share/games/doom,
+or anywhere with DOOMWADDIR pointing there; doom then starts it rather
+than Freedoom (doom -iwad freedoom1.wad still picks Freedoom). Add-on
+levels load with doom -file NAME.wad.
+
+Settings and saved games go to ~/.doom/ (default.cfg, and
+savegame/IWAD/ for each game's saves).
+
+Keys: arrows move and turn, Ctrl fires, Space opens doors and presses
+switches, Shift runs, Alt strafes (with the arrows), 1-7 choose weapons,
+Tab shows the map, Escape opens the menu, Enter and Y/N answer it, F2
+saves, F3 loads, F11 changes the gamma. Closing the window quits.
+
+Sound effects play through /dev/audio when the system has an audio
+output; music is not played yet.

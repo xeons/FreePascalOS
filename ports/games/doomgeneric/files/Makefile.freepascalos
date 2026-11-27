@@ -1,0 +1,68 @@
+# FreePascalOS
+# Copyright (C) 2026 Brandon Scott
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+# Builds doomgeneric for FreePascalOS: upstream's engine files (the list
+# of its own Makefile, less the X11 platform file) and the platform
+# layer kept in the port's files/ (PLATFORM_DIRECTORY). Run in
+# doomgeneric's source folder with CC, CFLAGS and LDFLAGS from the
+# ports tool's C toolchain:
+#
+#   make -f .../Makefile.freepascalos PLATFORM_DIRECTORY=.../files
+
+PLATFORM_DIRECTORY ?= .
+OUTPUT := doom
+OBJECT_DIRECTORY := build-freepascalos
+
+# Doom's own frame is 320x200: the platform layer scales it to the
+# window, so the engine draws it unscaled. FEATURE_SOUND selects the
+# platform's sound module (DG_sound_module, DG_music_module).
+ENGINE_DEFINES := -DNORMALUNIX -DLINUX -D_DEFAULT_SOURCE -DFEATURE_SOUND \
+	-DDOOMGENERIC_RESX=320 -DDOOMGENERIC_RESY=200
+# Upstream's code is 1990s C: its warnings are its own and not ours to
+# fix in a port; the platform layer is held to -Wall -Wextra.
+ENGINE_FLAGS := $(ENGINE_DEFINES) -std=gnu99 -fcommon -w
+PLATFORM_FLAGS := $(ENGINE_DEFINES) -std=gnu99 -Wall -Wextra -I.
+
+ENGINE_OBJECTS := dummy am_map doomdef doomstat dstrings d_event d_items d_iwad d_loop d_main d_mode d_net \
+	f_finale f_wipe g_game hu_lib hu_stuff info i_cdmus i_endoom i_joystick i_scale i_sound i_system i_timer \
+	memio m_argv m_bbox m_cheat m_config m_controls m_fixed m_menu m_misc m_random p_ceilng p_doors p_enemy \
+	p_floor p_inter p_lights p_map p_maputl p_mobj p_plats p_pspr p_saveg p_setup p_sight p_spec p_switch \
+	p_telept p_tick p_user r_bsp r_data r_draw r_main r_plane r_segs r_sky r_things sha1 sounds statdump \
+	st_lib st_stuff s_sound tables v_video wi_stuff w_checksum w_file w_main w_wad z_zone w_file_stdc \
+	i_input i_video doomgeneric
+PLATFORM_OBJECTS := doomgeneric_freepascalos doomgeneric_freepascalos_sound
+
+ENGINE_OBJECT_FILES := $(addprefix $(OBJECT_DIRECTORY)/,$(addsuffix .o,$(ENGINE_OBJECTS)))
+PLATFORM_OBJECT_FILES := $(addprefix $(OBJECT_DIRECTORY)/,$(addsuffix .o,$(PLATFORM_OBJECTS)))
+
+all: $(OUTPUT)
+
+$(OUTPUT): $(ENGINE_OBJECT_FILES) $(PLATFORM_OBJECT_FILES)
+	$(CC) $(CFLAGS) $(LDFLAGS) -o $@ $^ -lm
+
+$(OBJECT_DIRECTORY):
+	mkdir -p $@
+
+$(ENGINE_OBJECT_FILES): $(OBJECT_DIRECTORY)/%.o: %.c | $(OBJECT_DIRECTORY)
+	$(CC) $(CFLAGS) $(ENGINE_FLAGS) -c $< -o $@
+
+$(PLATFORM_OBJECT_FILES): $(OBJECT_DIRECTORY)/%.o: $(PLATFORM_DIRECTORY)/%.c | $(OBJECT_DIRECTORY)
+	$(CC) $(CFLAGS) $(PLATFORM_FLAGS) -c $< -o $@
+
+clean:
+	rm -rf $(OBJECT_DIRECTORY) $(OUTPUT)
+
+.PHONY: all clean

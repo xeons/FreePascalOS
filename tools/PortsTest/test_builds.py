@@ -376,6 +376,21 @@ class BuildTests(support.ScratchTestCase):
         self.assertIn("data                 1.0          < 1.1", self.ports("outdated", expect=1))
         self.assertIn("< 1.1", self.ports("outdated", "--root", root, expect=1))
 
+    def test_image_entries_that_go_with_another(self):
+        game = support.port_toml("game", extra="""
+            [build.steps]
+            install = ["mkdir -p ${STAGE}${PREFIX}/bin"]
+            """, build='[build]\nsystem = "custom"\ntoolchain = "c"\n')
+        self.make_tree({"misc/game": game, "misc/data": self.none_port(),
+                        "misc/app": self.none_port("app"), "misc/extra": self.none_port("extra")})
+        self.write("ports/image.list", "game\ndata with game\napp\nextra with misc/app\n")
+        root = self.path("image-root")
+        output = self.ports("install-to-image", "--root", root, "--list", self.path("ports/image.list"))
+        self.assertIn("SKIP game: the C toolchain", output)
+        self.assertIn("SKIP data: goes with game, which is not going on the image", output)
+        self.assertEqual(sorted(database.installed_manifests(root)), ["app", "extra"])
+        self.assertFalse(os.path.exists(self.package_path("data")))
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -58,7 +58,7 @@ function InstalledPrograms: TProgramList;
 begin
   if not ProgramsRead then
   begin
-    Programs := DiscoverPrograms(DefaultProgramFoldersRoot);
+    Programs := DiscoverInstalledPrograms;
     ProgramsRead := True;
   end;
   Result := Programs;

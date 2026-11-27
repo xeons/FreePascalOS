@@ -236,6 +236,18 @@ begin
   Check('folders: no program.info is a reason to skip',
     not ReadProgramFolder(Root + '/empty', Info, Problems) and HasProblem(Problems, 'no program.info'));
   Check('folders: a missing root has no programs', Length(DiscoverPrograms(Root + '/nothing-here')) = 0);
+
+  { A second root (ported software's /usr/local/app): its programs join
+    the first's, sorted with them; one named like a first root's folder
+    is skipped; a missing root adds nothing. }
+  MakeProgram(Root + '/ports', 'doom', Describe('Doom', 'Games', 'doom'), True);
+  MakeProgram(Root + '/ports', 'notepad', Describe('Other Notepad', 'Accessories', 'notepad'), True);
+  List := DiscoverProgramsIn([Root, Root + '/ports', Root + '/nothing-here'], Skipped);
+  Check('roots: the second root''s program joins the first''s, in category order',
+    (Length(List) = 7) and (List[2].Name = 'Doom') and (List[2].Folder = Root + '/ports/doom'));
+  Check('roots: a folder named like an earlier root''s is skipped',
+    (List[FindProgramByFolder(List, 'notepad')].Name = 'Notepad') and (Length(Skipped) = 5) and
+    (Skipped[4].Folder = Root + '/ports/notepad'));
   RemoveTree(Root);
 end;
 

@@ -38,6 +38,8 @@ The ports so far:
 | devel/llvm-runtime | 23.1.6 | custom: libLLVM.so from llvm's package | tested (x86-64, AArch64); on the system disk (with mesa) |
 | graphics/mesa | 26.3.1 | meson (llvmpipe, softpipe, lavapipe; EGL and Vulkan platforms for the display server), signed source, Mako as a build-time source | tested (x86-64; AArch64 headless: gltest); on the system disk |
 | graphics/gldemos | 1.0 | custom, from `files/` (gltest, glgears, vkcube) | tested (x86-64; AArch64: gltest); on the system disk |
+| games/doomgeneric | 0.0.20261011 | custom (a Makefile of the port's own; the platform layer and sound in `files/`), a pinned commit, four patches | built (x86-64, AArch64); on the system disk (with the C toolchain) |
+| games/freedoom | 0.13.0 | none (data: the IWADs into share/games/doom), signed source | built; on the system disk with doomgeneric |
 
 "untested" ports are committed but have not been built and run on the
 system yet: the C ports wait for the C toolchain (below) and are skipped
@@ -65,6 +67,13 @@ refuses a port that tries). The reasons:
 the shell, logins, services), and the program loader looks for shared
 libraries in `/usr/local/lib` after `/lib` (a library a program needs,
 and LoadLibrary of a bare name).
+
+A graphical program shows in the Start menu and on the desktop with a
+folder under `/usr/local/app`, as the system's own programs have under
+`/app`: `/usr/local/app/NAME/program.info` (docs/Architecture.md,
+"Program folders": name, description, category, a theme icon) and the
+executable it names in that folder, usually a link to the one in
+`/usr/local/bin` (games/doomgeneric does this).
 
 ## port.toml
 
@@ -373,7 +382,10 @@ against the index's size and SHA-256) with what they need.
 
 ## The system disk
 
-`ports/image.list` names the ports the system disk carries installed.
+`ports/image.list` names the ports the system disk carries installed;
+a line `PORT with OTHER` puts PORT on it only when OTHER goes on it too
+(OTHER's package could be built here), as Freedoom's game data goes
+with the doomgeneric engine and is left out without the C toolchain.
 `make system-disk` builds their packages (and their run dependencies),
 installs them into `build/ARCH/ports/image-root` with `install-to-image`
 (recorded in its `/var/db/pkg`, so pkg lists, verifies and removes them
