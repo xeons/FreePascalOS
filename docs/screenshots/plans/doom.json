@@ -1,0 +1,3 @@
+[["sh", "doom > /tmp/doom.log 2>&1 &"], ["sleep", 20],
+ ["move", 1250, 760], ["sleep", 1], ["shot", "doom"],
+ ["sh", "cat /tmp/doom.log | tail -5"]]

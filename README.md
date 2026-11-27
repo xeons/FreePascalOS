@@ -29,10 +29,10 @@ taken by `scripts/take-screenshots.py` from the plans in
 | A program that stopped responding: End task or Wait, with the Task Manager | Files and the image viewer |
 | ![A terminal running sysinfo](docs/screenshots/sysinfo.png) | ![Paint and the calculator](docs/screenshots/paint-calculator.png) |
 | A terminal running `sysinfo` | Paint and the calculator |
-| ![The controls tour](docs/screenshots/controls.png) | |
-| The controls tour: banded group boxes, split buttons, progress | |
+| ![The controls tour](docs/screenshots/controls.png) | ![Doom with Freedoom](docs/screenshots/doom.png) |
+| The controls tour: banded group boxes, split buttons, progress | Doom (the doomgeneric port) playing Freedoom: Phase 1 |
 
-The gears, the cube and the C programs need the C toolchain (`make
+The gears, the cube, Doom and the C programs need the C toolchain (`make
 c-toolchain`); without it `make system-disk` leaves those ports out.
 
 ## What works today
