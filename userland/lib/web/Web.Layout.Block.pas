@@ -180,6 +180,14 @@ begin
   Child.Y := PlacedY - Input.BfcY + Child.Margin[sideTop];
 end;
 
+{ An auto height without an aspect ratio: the content's. }
+function HeightFromContent(Style: TCssComputedStyle): Boolean;
+var
+  Ratio: Double;
+begin
+  Result := IsAutoValue(Style, cpHeight) and not PreferredAspectRatio(Style, Ratio);
+end;
+
 const
   { Tries of a box beside floats before it is left where it is. }
   MostFloatMoves = 64;
@@ -221,7 +229,7 @@ begin
   CollapseTop := not (bfNewFormattingContext in Box.Flags) and (Box.Border[sideTop] = 0) and
     (Box.Padding[sideTop] = 0) and (Box.Kind <> bkViewport);
   CollapseBottom := not (bfNewFormattingContext in Box.Flags) and (Box.Border[sideBottom] = 0) and
-    (Box.Padding[sideBottom] = 0) and IsAutoValue(Box.Style, cpHeight) and (Box.Kind <> bkViewport);
+    (Box.Padding[sideBottom] = 0) and HeightFromContent(Box.Style) and (Box.Kind <> bkViewport);
   ParentTop := EmptyStrut;
   AddMargin(ParentTop, Box.Margin[sideTop]);
   Pending := EmptyStrut;
@@ -511,7 +519,7 @@ begin
         ClampLines(Box, LineClampOf(Box.Style), ContentHeight);
       ApplyTextOverflow(Box);
       SetOwnMargins(Box);
-      if (ContentHeight = 0) and (Box.Inline.LineCount = 0) and IsAutoValue(Box.Style, cpHeight) and
+      if (ContentHeight = 0) and (Box.Inline.LineCount = 0) and HeightFromContent(Box.Style) and
          (VerticalBorderPadding(Box) = 0) and not (bfNewFormattingContext in Box.Flags) and
          (MinBorderBoxHeight(Box, Input.ContainingHeight) <= 0) then
       begin

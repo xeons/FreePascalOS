@@ -64,7 +64,7 @@ var
 implementation
 
 uses
-  Css.ComputedValues, Css.PropertyIds, Css.Keywords, Web.Layout.Values, Web.Layout.Sizing, Web.Layout.Block,
+  Math, Css.ComputedValues, Css.PropertyIds, Css.Keywords, Web.Layout.Values, Web.Layout.Sizing, Web.Layout.Block,
   Web.Layout.Replaced, Web.Layout.Flex, Web.Layout.Grid, Web.Layout.Table, Web.Layout.Positioned,
   Web.Layout.Transforms;
 
@@ -82,6 +82,7 @@ end;
 procedure ComputeUsedWidth(Box: TLayoutBox; const Input: TLayoutInput);
 var
   Available, Specified, Remaining: Single;
+  Ratio: Double;
   LeftAuto, RightAuto: Boolean;
 begin
   Available := Input.AvailableWidth;
@@ -105,6 +106,10 @@ begin
       end;
   end;
   Specified := SpecifiedBorderBoxWidth(Box, Input.AvailableWidth);
+  { An auto width with a definite height and an aspect ratio. }
+  if (Specified < 0) and PreferredAspectRatio(Box.Style, Ratio) and
+    (SpecifiedBorderBoxHeight(Box, Input.ContainingHeight) >= 0) then
+    Specified := WidthFromRatio(Box, SpecifiedBorderBoxHeight(Box, Input.ContainingHeight), Ratio);
   if Specified < 0 then
   begin
     Box.Width := ClampWidth(Box, Available - Box.Margin[sideLeft] - Box.Margin[sideRight], Input.AvailableWidth);
@@ -149,6 +154,7 @@ end;
 function DefiniteContentHeight(Box: TLayoutBox; const Input: TLayoutInput): Single;
 var
   Specified: Single;
+  Ratio: Double;
 begin
   if Input.FixedHeight >= 0 then
     Exit(Input.FixedHeight - VerticalBorderPadding(Box));
@@ -161,6 +167,9 @@ begin
       Exit(Box.ContentHeight);
   end;
   Specified := SpecifiedBorderBoxHeight(Box, Input.ContainingHeight);
+  { An auto height from the width and an aspect ratio is definite. }
+  if (Specified < 0) and PreferredAspectRatio(Box.Style, Ratio) then
+    Specified := HeightFromRatio(Box, Box.Width, Ratio);
   if Specified < 0 then
     Exit(Indefinite);
   Result := ClampHeight(Box, Specified, Input.ContainingHeight) - VerticalBorderPadding(Box);
@@ -171,6 +180,7 @@ end;
 procedure ComputeUsedHeight(Box: TLayoutBox; const Input: TLayoutInput; ContentHeight: Single);
 var
   Specified: Single;
+  Ratio: Double;
 begin
   if Input.FixedHeight >= 0 then
   begin
@@ -178,6 +188,14 @@ begin
     Exit;
   end;
   Specified := SpecifiedBorderBoxHeight(Box, Input.ContainingHeight);
+  if (Specified < 0) and PreferredAspectRatio(Box.Style, Ratio) then
+  begin
+    { From the width (CSS Sizing 4); with min-height auto and visible
+      overflow the content still fits (the automatic minimum). }
+    Specified := HeightFromRatio(Box, Box.Width, Ratio);
+    if IsAutoValue(Box.Style, cpMinHeight) and not OverflowClips(Box.Style) then
+      Specified := Max(Specified, ContentHeight + VerticalBorderPadding(Box));
+  end;
   if Specified < 0 then
     Specified := ContentHeight + VerticalBorderPadding(Box);
   Box.Height := ClampHeight(Box, Specified, Input.ContainingHeight);

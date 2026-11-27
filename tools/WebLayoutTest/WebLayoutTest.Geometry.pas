@@ -223,6 +223,45 @@ begin
   end;
 end;
 
+{ aspect-ratio on boxes that are not replaced (CSS Sizing 4): a height
+  from the width, a width from a definite height, an absolutely
+  positioned box's height, and content taller than the ratio's height
+  (min-height auto) keeps the box tall enough. }
+procedure CheckAspectRatio;
+const
+  Page = '<!doctype html><body style="margin:0;font:10px/20px sans-serif">' +
+    '<div id=r1 style="width:100px;aspect-ratio:2/1"></div>' +
+    '<div id=r2 style="height:50px;aspect-ratio:2"></div>' +
+    '<div id=r3 style="position:absolute;top:200px;width:60px;aspect-ratio:1/1"></div>' +
+    '<div id=r4 style="width:100px;aspect-ratio:10/1">a b c d e f g h i j k l m n o p q r s t u v w x y z</div>' +
+    '</body>';
+var
+  Document: TDocument;
+  Layout: TDocumentLayout;
+  ScriptLayout: TDocumentScriptLayout;
+  X, Y, Width, Height: Double;
+  Sizes: string;
+  Name: string;
+  Found: Boolean;
+begin
+  Layout := LayoutText(Page, 800, Document);
+  ScriptLayout := TDocumentScriptLayout.Create;
+  try
+    ScriptLayout.Layout := Layout;
+    Sizes := '';
+    for Name in ['r1', 'r2', 'r3'] do
+      if ScriptLayout.BorderBox(Document.GetElementById(Name), X, Y, Width, Height) then
+        Sizes := Sizes + FloatToStr(Round(Y)) + ' ' + FloatToStr(Round(Width)) + 'x' + FloatToStr(Round(Height)) + ' ';
+    Check(Sizes = '0 100x50 50 100x50 200 60x60 ', 'geometry: aspect-ratio sizes (' + Sizes + ')');
+    Found := ScriptLayout.BorderBox(Document.GetElementById('r4'), X, Y, Width, Height);
+    Check(Found and (Height > 20), 'geometry: content taller than an aspect ratio keeps the box tall enough (' +
+      FloatToStr(Height) + ')');
+  finally
+    ScriptLayout.Free;
+    FreeLayout(Layout, Document);
+  end;
+end;
+
 procedure CheckElementGeometry;
 var
   Document: TDocument;
@@ -295,6 +334,7 @@ begin
     CheckFixedTableLayout;
     CheckCollapsedBorders;
     CheckFormattingContextBesideFloats;
+    CheckAspectRatio;
     { A prefixed svg:svg (as XHTML writes it) is an SVG element: its
       height attribute sizes it. }
     Prefixed := Document.CreateElementNS('http://www.w3.org/2000/svg', 'svg:svg');
