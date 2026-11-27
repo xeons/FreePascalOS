@@ -26,11 +26,19 @@
   says: the first at 0, the last at 1, missing ones spread evenly, none
   before an earlier one) and then gives the color at any point.
   Colors are interpolated in premultiplied sRGB.
+
+  For drawing many pixels a ramp is made from the prepared gradient:
+  the colours at RampSteps + 1 even steps between each pair of stops.
+  A point's position along the line or ray still picks the pair (so a
+  hard stop stays as sharp as the pixel grid allows), the step nearest
+  its weight between them gives the colour, within one level of the
+  exact one.
 }
 unit Web.Paint.Gradients;
 
 {$mode objfpc}
 {$H+}
+{$pointermath on}
 
 interface
 
@@ -60,6 +68,43 @@ type
 function PrepareGradient(Gradient: TCssValue; BoxX, BoxY, BoxWidth, BoxHeight: Single; CurrentColor: TColor;
   out Prepared: TPreparedGradient): Boolean;
 function GradientColorAt(const Prepared: TPreparedGradient; X, Y: Single): TColor;
+
+const
+  { The colours worked out between two stops. }
+  RampSteps = 256;
+
+type
+  TGradientRamp = record
+    { Between stop I - 1 and stop I (I from 1): RampSteps + 1 colours
+      from (I - 1) * (RampSteps + 1). }
+    Colors: array of TColor;
+    { RampSteps over the distance between the pair's stops (0: a hard
+      stop). }
+    StepScales: array of Single;
+    { Before the first stop and after the last. }
+    FirstColor, LastColor: TColor;
+    { A repeating gradient: positions wrap into WrapStart .. WrapStart +
+      WrapSpan. }
+    Wraps: Boolean;
+    WrapStart, WrapSpan: Single;
+  end;
+
+{ The ramp of a prepared gradient, its colours at Opacity (0-255). }
+procedure PrepareGradientRamp(const Prepared: TPreparedGradient; Opacity: Byte; out Ramp: TGradientRamp);
+{ The colour at Position along the gradient line (0 at its start, 1 at
+  its end) or ray. }
+function RampColorAt(const Prepared: TPreparedGradient; const Ramp: TGradientRamp; Position: Single): TColor;
+
+{ A point's position on the gradient from a part that depends on its X
+  only and one that depends on its Y only (worked out once per column
+  and once per row), in the order GradientColorAt works it out (the same
+  position to the last bit): their sum along the line for a linear
+  gradient, the square root of their sum for a radial one. }
+function GradientColumnTerm(const Prepared: TPreparedGradient; X: Single): Single;
+function GradientRowTerm(const Prepared: TPreparedGradient; Y: Single): Single;
+function GradientPosition(const Prepared: TPreparedGradient; ColumnTerm, RowTerm: Single): Single; inline;
+{ Whether the colour changes along X, along Y. }
+procedure GradientVariation(const Prepared: TPreparedGradient; out AlongX, AlongY: Boolean);
 
 implementation
 
@@ -436,12 +481,36 @@ begin
   Result := Prepared.StopCount > 0;
 end;
 
+{ The colour Weight of the way from Low to High. }
+function MixedStopColor(const Low, High: TGradientStop; Weight: Single): TColor;
+var
+  Alpha: Single;
+begin
+  Alpha := Low.Alpha + (High.Alpha - Low.Alpha) * Weight;
+  if Alpha <= 0.002 then
+    Exit(0);
+  Result := ArgbColor(Round(Alpha * 255), Round(EnsureRange((Low.Red + (High.Red - Low.Red) * Weight) / Alpha, 0, 255)),
+    Round(EnsureRange((Low.Green + (High.Green - Low.Green) * Weight) / Alpha, 0, 255)),
+    Round(EnsureRange((Low.Blue + (High.Blue - Low.Blue) * Weight) / Alpha, 0, 255)));
+end;
+
+{ Repeating: the position brought into the first repetition. }
+function WrappedPosition(const Prepared: TPreparedGradient; Position: Single): Single;
+var
+  First, Span: Single;
+begin
+  Result := Position;
+  First := Prepared.Stops[0].Position;
+  Span := Prepared.Stops[Prepared.StopCount - 1].Position - First;
+  if Span > 0.0001 then
+    Result := First + (Position - First) - Span * Floor((Position - First) / Span);
+end;
+
 function GradientColorAt(const Prepared: TPreparedGradient; X, Y: Single): TColor;
 var
-  Position, Span, Weight, Alpha: Single;
+  Position, Span, Weight: Single;
   Index: Integer;
   Low, High: TGradientStop;
-  First, Last: Single;
 begin
   if Prepared.Radial then
   begin
@@ -456,13 +525,7 @@ begin
     Position := ((X - Prepared.CentreX) * Prepared.DirectionX + (Y - Prepared.CentreY) * Prepared.DirectionY) /
       Prepared.LineLength + 0.5;
   if Prepared.Repeating then
-  begin
-    First := Prepared.Stops[0].Position;
-    Last := Prepared.Stops[Prepared.StopCount - 1].Position;
-    Span := Last - First;
-    if Span > 0.0001 then
-      Position := First + (Position - First) - Span * Floor((Position - First) / Span);
-  end;
+    Position := WrappedPosition(Prepared, Position);
   if Position <= Prepared.Stops[0].Position then
   begin
     Low := Prepared.Stops[0];
@@ -488,12 +551,136 @@ begin
     else
       Weight := (Position - Low.Position) / Span;
   end;
-  Alpha := Low.Alpha + (High.Alpha - Low.Alpha) * Weight;
-  if Alpha <= 0.002 then
-    Exit(0);
-  Result := ArgbColor(Round(Alpha * 255), Round(EnsureRange((Low.Red + (High.Red - Low.Red) * Weight) / Alpha, 0, 255)),
-    Round(EnsureRange((Low.Green + (High.Green - Low.Green) * Weight) / Alpha, 0, 255)),
-    Round(EnsureRange((Low.Blue + (High.Blue - Low.Blue) * Weight) / Alpha, 0, 255)));
+  Result := MixedStopColor(Low, High, Weight);
+end;
+
+function FadedColor(Color: TColor; Opacity: Byte): TColor; inline;
+begin
+  if Opacity = 255 then
+    Result := Color
+  else
+    Result := FadeColor(Color, Opacity);
+end;
+
+procedure PrepareGradientRamp(const Prepared: TPreparedGradient; Opacity: Byte; out Ramp: TGradientRamp);
+var
+  Pair, Step, Last: Integer;
+  Span: Single;
+begin
+  Ramp := Default(TGradientRamp);
+  Last := Prepared.StopCount - 1;
+  if Last < 0 then
+    Exit;
+  Ramp.FirstColor := FadedColor(MixedStopColor(Prepared.Stops[0], Prepared.Stops[0], 0), Opacity);
+  Ramp.LastColor := FadedColor(MixedStopColor(Prepared.Stops[Last], Prepared.Stops[Last], 0), Opacity);
+  SetLength(Ramp.Colors, Max(1, Last) * (RampSteps + 1));
+  SetLength(Ramp.StepScales, Max(1, Last + 1));
+  for Pair := 1 to Last do
+  begin
+    Span := Prepared.Stops[Pair].Position - Prepared.Stops[Pair - 1].Position;
+    if Span <= 0 then
+      Ramp.StepScales[Pair] := 0
+    else
+      Ramp.StepScales[Pair] := RampSteps / Span;
+    for Step := 0 to RampSteps do
+      Ramp.Colors[(Pair - 1) * (RampSteps + 1) + Step] :=
+        FadedColor(MixedStopColor(Prepared.Stops[Pair - 1], Prepared.Stops[Pair], Step / RampSteps), Opacity);
+  end;
+  Ramp.WrapStart := Prepared.Stops[0].Position;
+  Ramp.WrapSpan := Prepared.Stops[Last].Position - Ramp.WrapStart;
+  Ramp.Wraps := Prepared.Repeating and (Ramp.WrapSpan > 0.0001);
+end;
+
+function GradientColumnTerm(const Prepared: TPreparedGradient; X: Single): Single;
+begin
+  if Prepared.Radial then
+  begin
+    if (Prepared.RadiusX <= 0) or (Prepared.RadiusY <= 0) then
+      Result := 0
+    else
+      Result := Sqr((X - Prepared.CentreX) / Prepared.RadiusX);
+  end
+  else
+    Result := (X - Prepared.CentreX) * Prepared.DirectionX;
+end;
+
+function GradientRowTerm(const Prepared: TPreparedGradient; Y: Single): Single;
+begin
+  if Prepared.Radial then
+  begin
+    { A ray of no length: everything at its end. }
+    if (Prepared.RadiusX <= 0) or (Prepared.RadiusY <= 0) then
+      Result := 1
+    else
+      Result := Sqr((Y - Prepared.CentreY) / Prepared.RadiusY);
+  end
+  else
+    Result := (Y - Prepared.CentreY) * Prepared.DirectionY;
+end;
+
+function GradientPosition(const Prepared: TPreparedGradient; ColumnTerm, RowTerm: Single): Single;
+begin
+  if Prepared.Radial then
+    Result := Sqrt(ColumnTerm + RowTerm)
+  else if Prepared.LineLength <= 0 then
+    Result := 0
+  else
+    Result := (ColumnTerm + RowTerm) / Prepared.LineLength + 0.5;
+end;
+
+procedure GradientVariation(const Prepared: TPreparedGradient; out AlongX, AlongY: Boolean);
+const
+  { A direction this small is a rounding error of the sine or cosine of
+    a right angle. }
+  Negligible = 1E-6;
+begin
+  if Prepared.Radial then
+  begin
+    AlongX := (Prepared.RadiusX > 0) and (Prepared.RadiusY > 0);
+    AlongY := AlongX;
+  end
+  else
+  begin
+    AlongX := (Prepared.LineLength > 0) and (Abs(Prepared.DirectionX) >= Negligible);
+    AlongY := (Prepared.LineLength > 0) and (Abs(Prepared.DirectionY) >= Negligible);
+  end;
+end;
+
+function RampColorAt(const Prepared: TPreparedGradient; const Ramp: TGradientRamp; Position: Single): TColor;
+var
+  Stops: ^TGradientStop;
+  Index, Last, Step, Repetitions: Integer;
+  Quotient: Single;
+begin
+  Stops := @Prepared.Stops[0];
+  if Ramp.Wraps then
+  begin
+    { As WrappedPosition, with Floor as Trunc (one less below zero). }
+    Quotient := (Position - Ramp.WrapStart) / Ramp.WrapSpan;
+    Repetitions := Trunc(Quotient);
+    if Repetitions > Quotient then
+      Dec(Repetitions);
+    Position := Ramp.WrapStart + (Position - Ramp.WrapStart) - Ramp.WrapSpan * Repetitions;
+  end;
+  if Position <= Stops[0].Position then
+    Exit(Ramp.FirstColor);
+  Last := Prepared.StopCount - 1;
+  if Position >= Stops[Last].Position then
+    Exit(Ramp.LastColor);
+  Index := 1;
+  while (Index < Last) and (Stops[Index].Position < Position) do
+    Inc(Index);
+  if Ramp.StepScales[Index] = 0 then
+    Step := RampSteps
+  else
+  begin
+    Step := Trunc((Position - Stops[Index - 1].Position) * Ramp.StepScales[Index] + 0.5);
+    if Step > RampSteps then
+      Step := RampSteps
+    else if Step < 0 then
+      Step := 0;
+  end;
+  Result := Ramp.Colors[(Index - 1) * (RampSteps + 1) + Step];
 end;
 
 end.

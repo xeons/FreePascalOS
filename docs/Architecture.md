@@ -17282,9 +17282,27 @@ the pixel the usual way and only that is mixed by coverage, so a 0.2
 black shadow and 54% placeholder text come out as dark as in Firefox,
 not half as dark), the controls
 (check boxes, radio buttons, meters, text field values), clip regions,
-opacity groups and masks on transparent surfaces as big as their clip
-(not the whole surface) and rounded clips composited through their
-coverage.
+opacity groups and masks on transparent surfaces and rounded clips
+composited through their coverage.
+
+What would be done again on every paint is not. A group's surface is
+only as big as what it draws within its clip (`Web.Paint.GroupExtents`
+works out, once per list revision, every push item's ink bounds: items
+widened by their shadow blur or font size, nested clips, transforms and
+filter blurs; fixed and sticky subtrees fall back to the clip), and
+group surfaces come from a small pool (`Web.Paint.SurfacePool`). An
+opacity group of one rectangle, gradient, shadow or image is drawn
+without a group, the item at the group's opacity (Gecko's
+ApplyOpacityToChildren); a fully transparent one is skipped. Gradients
+are drawn from a ramp of colours between each pair of stops (the stops
+still decide the pair, so hard stops stay sharp) with the position
+split into a column and a row part, one colour per row when the
+gradient only runs down. Box shadow masks (`Web.Paint.ShadowCache`, by
+their geometry relative to the mask, 32 MB) and smoothly scaled images
+(`Web.Paint.ImageCache`, by image, pixels, part and size, 64 MB; checked
+against a checksum of the source when the list was rebuilt, since only a
+rebuild can follow changed pixels) are kept in least recently used
+caches (`Web.Paint.PaintCaches`).
 
 `TDocumentPainter` (`Web.Paint.Painter`) keeps a layout's display list,
 rebuilt when the layout's `PaintVersion` moved, and hit tests on the

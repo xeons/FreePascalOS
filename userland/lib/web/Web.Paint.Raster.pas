@@ -29,10 +29,14 @@
   Rectangles, rounded rectangles and borders are drawn with coverage
   (anti-aliased) shapes; text glyph by glyph from libfont's glyph cache
   at the device pixel size, placed at the positions layout measured;
-  images scaled (and tiled for backgrounds); gradients pixel by pixel;
-  box shadows as a blurred coverage mask. Clips narrow the canvas's
-  clip region (rounded clips are clipped to their rectangle); an
-  opacity group is drawn on a transparent surface and composited.
+  images scaled (and tiled for backgrounds; the scaled copies kept in
+  Web.Paint.ImageCache); gradients from a ramp of their colours; box
+  shadows as a blurred coverage mask (kept in Web.Paint.ShadowCache).
+  Clips narrow the canvas's clip region (a rounded clip draws into a
+  group composited through its coverage); an opacity group is drawn on
+  a transparent surface as big as what it draws (Web.Paint.GroupExtents)
+  and composited, or, holding one item that takes an opacity, not made
+  at all: the item is drawn at the group's opacity.
 }
 unit Web.Paint.Raster;
 
@@ -73,11 +77,13 @@ uses
   Drawing.CoverageBlending, Drawing.Scaling, Drawing.SmoothShapes, Drawing.Blurring, Web.Paint.Filters, Css.Keywords, Font.Outlines,
   Font.GlyphCache, Font.GlyphDrawing, Image.Model, Image.Surfaces, Image.Scalable, Web.Layout.Boxes, Web.Layout.TreeBuilder, Web.Text.Fonts,
   Web.Text.FontInstances, Web.Paint.Gradients, Web.Paint.Sticky, Web.Layout.EmbeddedContent, Drawing.Transforms,
-  Drawing.Paints, Drawing.PaintFilling, Css.TransformMatrices;
+  Drawing.Paints, Drawing.PaintFilling, Css.TransformMatrices, Web.Paint.GroupExtents, Web.Paint.SurfacePool,
+  Web.Paint.ShadowCache, Web.Paint.ImageCache;
 
 type
-  { A group: drawn into a surface of its own (as big as the clip when it
-    began, at Left, Top of the surface below), then composited. A mask
+  { A group: drawn into a surface of its own (as big as what it draws
+    within the clip when it began, at Left, Top of the surface below;
+    from the surface pool), then composited. A mask
     group draws its mask layers first, then (BeginMaskContent) its
     content into a second surface, composited through the first's
     alpha. }
@@ -129,6 +135,9 @@ type
       into (groups are only as big as their clips). }
     ShiftX, ShiftY: LongInt;
     Glyphs: TPlacedGlyphArray;
+    { The opacity the item being drawn is drawn at: an opacity group of
+      that one item folded into it (255 otherwise). }
+    ItemOpacity: Byte;
   end;
 
 function EdgesRectangle(Left, Top, Right, Bottom: LongInt): TRectangle;
@@ -208,10 +217,20 @@ begin
   end;
 end;
 
+{ Color at the opacity of the item being drawn. }
+function ItemColor(const Raster: TRaster; Color: TColor): TColor; inline;
+begin
+  if Raster.ItemOpacity = 255 then
+    Result := Color
+  else
+    Result := FadeColor(Color, Raster.ItemOpacity);
+end;
+
 procedure FillBox(var Raster: TRaster; X, Y, Width, Height: Single; Color: TColor; RadiiIndex: Integer);
 var
   Shape: TCoverageShape;
 begin
+  Color := ItemColor(Raster, Color);
   if (Width <= 0) or (Height <= 0) or (AlphaOf(Color) = 0) then
     Exit;
   if RadiiIndex < 0 then
@@ -492,8 +511,10 @@ var
   Count, Index, PixelSize, Spaces, Characters: Integer;
   Baseline, StartX, PenX, Slant: Double;
   Font: TOutlineFont;
+  Color: TColor;
 begin
   Run := Raster.List.Texts[Item.Index];
+  Color := ItemColor(Raster, Item.Color);
   Slant := 0;
   if Run.Font.SyntheticItalic then
     Slant := 0.2;
@@ -512,7 +533,7 @@ begin
     PenX := DeviceX(Raster, StartX + Raster.Glyphs[Index].X + Spaces * Run.SpaceExtra + Characters * Run.LetterExtra);
     Font := Raster.Glyphs[Index].Face.Font;
     if Font <> nil then
-      DrawGlyph(Raster, Font, PixelSize, Raster.Glyphs[Index].Glyph, PenX, Baseline, Item.Color,
+      DrawGlyph(Raster, Font, PixelSize, Raster.Glyphs[Index].Glyph, PenX, Baseline, Color,
         Run.Font.SyntheticBold, Slant);
     if Raster.Glyphs[Index].CodePoint = 32 then
       Inc(Spaces);
@@ -522,15 +543,62 @@ end;
 
 { ---- images ---- }
 
-procedure DrawImage(var Raster: TRaster; const Item: TDisplayItem);
 const
   { 4096 x 4096: larger images are scaled from their own pixels. }
   MaximumVectorRenderingPixels = 16 * 1024 * 1024;
+
+{ One tile of an image at Destination (device pixels), at the item's
+  opacity. Smoothly scaled images come from the scaled image cache. }
+procedure DrawImageTile(var Raster: TRaster; const Run: TImageRun; const Source: TSurface;
+  const Destination: TRectangle);
 var
   Rendered: TImage;
+  Scaled: TSurface;
+  SourceRectangle: TRectangle;
+  Width, Height: LongInt;
+begin
+  Width := RectangleWidth(Destination);
+  Height := RectangleHeight(Destination);
+  SourceRectangle := MakeRectangle(0, 0, Run.Image.Width, Run.Image.Height);
+  { A vector image (SVG) is drawn again at the size shown. }
+  Rendered := nil;
+  if (Run.Image is TScalableImage) and not Run.Pixelated and
+     (Int64(Width) * Height <= MaximumVectorRenderingPixels) then
+    Rendered := TScalableImage(Run.Image).RenderedAt(Width, Height);
+  if Rendered <> nil then
+    DrawSurface(Raster.Canvas, ImageSurface(Rendered), MakeRectangle(0, 0, Rendered.Width, Rendered.Height),
+      Destination.Left, Destination.Top, True, Raster.ItemOpacity)
+  else if (Width = Run.Image.Width) and (Height = Run.Image.Height) then
+    DrawSurface(Raster.Canvas, Source, SourceRectangle, Destination.Left, Destination.Top, True, Raster.ItemOpacity)
+  else if Run.Pixelated then
+    DrawSurfaceStretched(Raster.Canvas, Source, SourceRectangle, Destination, True)
+  else if ScaledImage(Run.Image, Source, SourceRectangle, Width, Height, Raster.List.Revision, Scaled) then
+    DrawSurface(Raster.Canvas, Scaled, MakeRectangle(0, 0, Width, Height), Destination.Left, Destination.Top, True,
+      Raster.ItemOpacity)
+  else
+    DrawSurfaceScaled(Raster.Canvas, Source, SourceRectangle, Destination, True);
+end;
+
+{ Whether every tile of the image can be drawn at an opacity (the paths
+  of DrawImageTile that take one). }
+function ImageTakesOpacity(const Raster: TRaster; const Item: TDisplayItem): Boolean;
+var
+  Run: TImageRun;
+  Tile: TRectangle;
+begin
+  Run := Raster.List.Images[Item.Index];
+  if (Run.Image = nil) or Run.Pixelated then
+    Exit(False);
+  { Tiles round to a pixel more or less. }
+  Tile := DeviceRectangle(Raster, Run.TileX, Run.TileY, Run.TileWidth, Run.TileHeight);
+  Result := ScaledImageFits(RectangleWidth(Tile) + 1, RectangleHeight(Tile) + 1);
+end;
+
+procedure DrawImage(var Raster: TRaster; const Item: TDisplayItem);
+var
   Run: TImageRun;
   Source: TSurface;
-  SourceRectangle, Destination, Area, Common: TRectangle;
+  Destination, Area, Common: TRectangle;
   Saved: TRegion;
   TileX, TileY, StartX, StartY, EndX, EndY: Single;
   Guard: Integer;
@@ -539,7 +607,6 @@ begin
   if (Run.Image = nil) or (Run.TileWidth <= 0) or (Run.TileHeight <= 0) then
     Exit;
   Source := ImageSurface(Run.Image);
-  SourceRectangle := MakeRectangle(0, 0, Run.Image.Width, Run.Image.Height);
   Area := DeviceRectangle(Raster, Item.X, Item.Y, Item.Width, Item.Height);
   CopyRegion(Raster.Canvas.Clip, Saved);
   IntersectRegionWithRectangle(Raster.Canvas.Clip, Area);
@@ -569,22 +636,7 @@ begin
       begin
         Destination := DeviceRectangle(Raster, TileX, TileY, Run.TileWidth, Run.TileHeight);
         if IntersectRectangles(Destination, RegionBounds(Raster.Canvas.Clip), Common) then
-        begin
-          { A vector image (SVG) is drawn again at the size shown. }
-          Rendered := nil;
-          if (Run.Image is TScalableImage) and not Run.Pixelated and
-             (Int64(RectangleWidth(Destination)) * RectangleHeight(Destination) <= MaximumVectorRenderingPixels) then
-            Rendered := TScalableImage(Run.Image).RenderedAt(RectangleWidth(Destination), RectangleHeight(Destination));
-          if Rendered <> nil then
-            DrawSurface(Raster.Canvas, ImageSurface(Rendered), MakeRectangle(0, 0, Rendered.Width, Rendered.Height),
-              Destination.Left, Destination.Top, True, 255)
-          else if (RectangleWidth(Destination) = Run.Image.Width) and (RectangleHeight(Destination) = Run.Image.Height) then
-            DrawSurface(Raster.Canvas, Source, SourceRectangle, Destination.Left, Destination.Top, True, 255)
-          else if Run.Pixelated then
-            DrawSurfaceStretched(Raster.Canvas, Source, SourceRectangle, Destination, True)
-          else
-            DrawSurfaceScaled(Raster.Canvas, Source, SourceRectangle, Destination, True);
-        end;
+          DrawImageTile(Raster, Run, Source, Destination);
         TileX := TileX + Run.TileWidth;
         Inc(Guard);
       end;
@@ -597,11 +649,13 @@ end;
 
 { ---- gradients ---- }
 
+{ Count colors from Left over line Y, within the clip. }
 procedure BlendRow(const Canvas: TCanvas; Y, Left: LongInt; const Colors: array of TColor; Count: LongInt);
 var
   Index, Start, Finish, X: LongInt;
   Piece: TRectangle;
   Line: PLongWord;
+  Color: TColor;
 begin
   Line := SurfaceLine(Canvas.Surface, Y);
   for Index := 0 to Canvas.Clip.Count - 1 do
@@ -612,19 +666,48 @@ begin
     Start := Max(Left, Piece.Left);
     Finish := Min(Left + Count, Piece.Right);
     for X := Start to Finish - 1 do
-      Line[X] := BlendColors(Line[X], Colors[X - Left]);
+    begin
+      Color := Colors[X - Left];
+      if AlphaOf(Color) = AlphaOpaque then
+        Line[X] := Color
+      else if AlphaOf(Color) <> 0 then
+        Line[X] := BlendColors(Line[X], Color);
+    end;
   end;
 end;
 
+{ The gradient's position at every column's centre (wrapped into the
+  tile when the gradient repeats), as GradientColumnTerm. }
+procedure ColumnTerms(const Prepared: TPreparedGradient; const Bounds: TRectangle; BoxLeft, TileWidth: Double;
+  Repeating: Boolean; var Terms: array of Single);
+var
+  Column: LongInt;
+  PointX: Double;
+begin
+  for Column := Bounds.Left to Bounds.Right - 1 do
+  begin
+    PointX := Column + 0.5 - BoxLeft;
+    if Repeating then
+      PointX := PointX - TileWidth * Floor(PointX / TileWidth);
+    Terms[Column - Bounds.Left] := GradientColumnTerm(Prepared, PointX);
+  end;
+end;
+
+{ A gradient's colours from a ramp: one per row when it changes only
+  down the box, one row copied down when it changes only across, else
+  pixel by pixel from the column and row parts of the position. }
 procedure DrawGradient(var Raster: TRaster; const Item: TDisplayItem);
 var
   Run: TGradientRun;
   Prepared: TPreparedGradient;
+  Ramp: TGradientRamp;
   Area, Bounds: TRectangle;
-  Row, Column: LongInt;
+  Row, Column, Width: LongInt;
   Colors: array of TColor;
-  BoxLeft, BoxTop, TileWidth, TileHeight, PointX, PointY: Double;
-  Repeating: Boolean;
+  Terms: array of Single;
+  BoxLeft, BoxTop, TileWidth, TileHeight, PointY: Double;
+  RowTerm: Single;
+  Repeating, AlongX, AlongY: Boolean;
 begin
   Run := Raster.List.Gradients[Item.Index];
   BoxLeft := DeviceX(Raster, Run.BoxX);
@@ -639,143 +722,77 @@ begin
   Area := DeviceRectangle(Raster, Item.X, Item.Y, Item.Width, Item.Height);
   if not IntersectRectangles(Area, RegionBounds(Raster.Canvas.Clip), Bounds) then
     Exit;
+  PrepareGradientRamp(Prepared, Raster.ItemOpacity, Ramp);
+  GradientVariation(Prepared, AlongX, AlongY);
+  Width := RectangleWidth(Bounds);
   Colors := nil;
-  SetLength(Colors, RectangleWidth(Bounds));
+  SetLength(Colors, Width);
+  Terms := nil;
+  SetLength(Terms, Width);
+  ColumnTerms(Prepared, Bounds, BoxLeft, TileWidth, Repeating, Terms);
   for Row := Bounds.Top to Bounds.Bottom - 1 do
   begin
     PointY := Row + 0.5 - BoxTop;
     if Repeating then
       PointY := PointY - TileHeight * Floor(PointY / TileHeight);
-    for Column := Bounds.Left to Bounds.Right - 1 do
+    RowTerm := GradientRowTerm(Prepared, PointY);
+    if not AlongX then
     begin
-      PointX := Column + 0.5 - BoxLeft;
-      if Repeating then
-        PointX := PointX - TileWidth * Floor(PointX / TileWidth);
-      Colors[Column - Bounds.Left] := GradientColorAt(Prepared, PointX, PointY);
+      FillSpan(Raster.Canvas, Row, Bounds.Left, Bounds.Right,
+        RampColorAt(Prepared, Ramp, GradientPosition(Prepared, 0, RowTerm)));
+      Continue;
     end;
-    BlendRow(Raster.Canvas, Row, Bounds.Left, Colors, RectangleWidth(Bounds));
+    if AlongY or (Row = Bounds.Top) then
+      for Column := 0 to Width - 1 do
+        Colors[Column] := RampColorAt(Prepared, Ramp, GradientPosition(Prepared, Terms[Column], RowTerm));
+    BlendRow(Raster.Canvas, Row, Bounds.Left, Colors, Width);
   end;
 end;
 
 { ---- shadows ---- }
 
-procedure BoxBlur(var Mask: array of Byte; Width, Height, Radius: LongInt);
-var
-  Temporary: array of Byte;
-  X, Y, Sum, Count, Pass: LongInt;
-begin
-  if Radius <= 0 then
-    Exit;
-  Temporary := nil;
-  SetLength(Temporary, Width * Height);
-  for Pass := 1 to 3 do
-  begin
-    for Y := 0 to Height - 1 do
-    begin
-      Sum := 0;
-      Count := 0;
-      for X := -Radius to Radius do
-        if (X >= 0) and (X < Width) then
-        begin
-          Inc(Sum, Mask[Y * Width + X]);
-          Inc(Count);
-        end;
-      for X := 0 to Width - 1 do
-      begin
-        Temporary[Y * Width + X] := Sum div (2 * Radius + 1);
-        if X - Radius >= 0 then
-          Dec(Sum, Mask[Y * Width + X - Radius]);
-        if X + Radius + 1 < Width then
-          Inc(Sum, Mask[Y * Width + X + Radius + 1]);
-      end;
-    end;
-    for X := 0 to Width - 1 do
-    begin
-      Sum := 0;
-      for Y := -Radius to Radius do
-        if (Y >= 0) and (Y < Height) then
-          Inc(Sum, Temporary[Y * Width + X]);
-      for Y := 0 to Height - 1 do
-      begin
-        Mask[Y * Width + X] := Sum div (2 * Radius + 1);
-        if Y - Radius >= 0 then
-          Dec(Sum, Temporary[(Y - Radius) * Width + X]);
-        if Y + Radius + 1 < Height then
-          Inc(Sum, Temporary[(Y + Radius + 1) * Width + X]);
-      end;
-    end;
-  end;
-  if Count = 0 then;
-end;
-
+{ The shadow's blurred mask (Web.Paint.ShadowCache) over its area, the
+  rows within the clip blended in its color. }
 procedure DrawShadow(var Raster: TRaster; const Item: TDisplayItem);
 var
   Run: TShadowRun;
-  Shape, BoxShape: TCoverageShape;
+  Geometry: TShadowGeometry;
   Area, Bounds: TRectangle;
-  Mask, BoxMask: array of Byte;
-  Radii, ShadowRadii: TCornerRadii;
-  Left, Top, Right, Bottom, Spread, Blur: Double;
-  Width, Height, Row, Index, Corner: LongInt;
-  Coverage: Byte;
-  Margin: LongInt;
+  Mask: PByte;
+  Radii: TCornerRadii;
+  Blur, Scale: Double;
+  Row: LongInt;
 begin
   Run := Raster.List.Shadows[Item.Index];
-  Spread := Run.Spread * Raster.View.Scale;
-  Blur := Run.Blur * Raster.View.Scale;
+  Scale := Raster.View.Scale;
+  Blur := Run.Blur * Scale;
   FillChar(Radii, SizeOf(Radii), 0);
   if Run.Radii >= 0 then
     Radii := ScaledRadii(Raster, Raster.List.Radii[Run.Radii]);
-  Margin := Ceil(Blur) + 2;
+  Geometry := Default(TShadowGeometry);
+  Geometry.Margin := Ceil(Blur) + 2;
   Area := DeviceRectangle(Raster, Item.X, Item.Y, Item.Width, Item.Height);
-  Area := InflateRectangle(Area, Margin);
+  Area := InflateRectangle(Area, Geometry.Margin);
   if not IntersectRectangles(Area, RegionBounds(Raster.Canvas.Clip), Bounds) then
     Exit;
-  Width := RectangleWidth(Area);
-  Height := RectangleHeight(Area);
-  if (Width <= 0) or (Height <= 0) or (Int64(Width) * Height > 16 * 1024 * 1024) then
+  Geometry.Width := RectangleWidth(Area);
+  Geometry.Height := RectangleHeight(Area);
+  Geometry.BoxLeft := DeviceX(Raster, Run.BoxX) - Area.Left;
+  Geometry.BoxTop := DeviceY(Raster, Run.BoxY) - Area.Top;
+  Geometry.BoxRight := DeviceX(Raster, Run.BoxX + Run.BoxWidth) - Area.Left;
+  Geometry.BoxBottom := DeviceY(Raster, Run.BoxY + Run.BoxHeight) - Area.Top;
+  Geometry.OffsetX := Run.OffsetX * Scale;
+  Geometry.OffsetY := Run.OffsetY * Scale;
+  Geometry.Spread := Run.Spread * Scale;
+  Geometry.BlurRadius := Round(Blur / 2);
+  Geometry.Radii := Radii;
+  Geometry.Inset := Run.Inset;
+  Mask := ShadowMask(Geometry);
+  if Mask = nil then
     Exit;
-  Left := DeviceX(Raster, Run.BoxX);
-  Top := DeviceY(Raster, Run.BoxY);
-  Right := DeviceX(Raster, Run.BoxX + Run.BoxWidth);
-  Bottom := DeviceY(Raster, Run.BoxY + Run.BoxHeight);
-  ShadowRadii := Radii;
-  for Corner := 0 to 3 do
-  begin
-    ShadowRadii[Corner].X := Max(0, Radii[Corner].X + Spread);
-    ShadowRadii[Corner].Y := Max(0, Radii[Corner].Y + Spread);
-  end;
-  BeginShape(Shape);
-  BeginShape(BoxShape);
-  AddShapeRoundedRectangleCorners(BoxShape, Left, Top, Right, Bottom, Radii, True);
-  Mask := nil;
-  SetLength(Mask, Width * Height);
-  BoxMask := nil;
-  SetLength(BoxMask, Width * Height);
-  ShapeCoverage(BoxShape, Area, BoxMask);
-  if Run.Inset then
-  begin
-    { The box minus the shadow's shape inside it. }
-    AddShapeRoundedRectangleCorners(Shape, Area.Left - Margin, Area.Top - Margin, Area.Right + Margin,
-      Area.Bottom + Margin, Default(TCornerRadii), True);
-    AddShapeRoundedRectangleCorners(Shape, Left + Run.OffsetX * Raster.View.Scale + Spread,
-      Top + Run.OffsetY * Raster.View.Scale + Spread, Right + Run.OffsetX * Raster.View.Scale - Spread,
-      Bottom + Run.OffsetY * Raster.View.Scale - Spread, Radii, False);
-  end
-  else
-    AddShapeRoundedRectangleCorners(Shape, Left + Run.OffsetX * Raster.View.Scale - Spread,
-      Top + Run.OffsetY * Raster.View.Scale - Spread, Right + Run.OffsetX * Raster.View.Scale + Spread,
-      Bottom + Run.OffsetY * Raster.View.Scale + Spread, ShadowRadii, True);
-  ShapeCoverage(Shape, Area, Mask);
-  BoxBlur(Mask, Width, Height, Round(Blur / 2));
-  for Index := 0 to Width * Height - 1 do
-    if Run.Inset then
-      Mask[Index] := (LongWord(Mask[Index]) * BoxMask[Index]) div 255
-    else
-      Mask[Index] := (LongWord(Mask[Index]) * (255 - BoxMask[Index])) div 255;
-  for Row := 0 to Height - 1 do
-    BlendMaskSpan(Raster.Canvas, Area.Top + Row, Area.Left, @Mask[Row * Width], Width, Item.Color);
-  if Coverage = 0 then;
+  for Row := Bounds.Top to Bounds.Bottom - 1 do
+    BlendMaskSpan(Raster.Canvas, Row, Area.Left, @Mask[(Row - Area.Top) * Geometry.Width], Geometry.Width,
+      ItemColor(Raster, Item.Color));
 end;
 
 { ---- controls ---- }
@@ -907,10 +924,17 @@ end;
 
 { ---- clips and groups ---- }
 
-procedure PushGroup(var Raster: TRaster; const Item: TDisplayItem); forward;
+const
+  { How far past an extent's rounded device rectangle drawing can reach
+    (anti-aliased edges, rounding). }
+  GroupInkMargin = 3;
+  { Device coordinates beyond this are off any surface. }
+  DeviceLimit = 1E7;
+
+procedure PushGroup(var Raster: TRaster; const Item: TDisplayItem; PushIndex: Integer); forward;
 procedure PopGroupMasked(var Raster: TRaster; const Shape: TCoverageShape); forward;
 
-procedure PushClip(var Raster: TRaster; const Item: TDisplayItem);
+procedure PushClip(var Raster: TRaster; const Item: TDisplayItem; PushIndex: Integer);
 var
   Opaque: TDisplayItem;
 begin
@@ -931,7 +955,7 @@ begin
       ScaledRadii(Raster, Raster.List.Radii[Item.Index]), True);
     Opaque := Item;
     Opaque.Value := 1;
-    PushGroup(Raster, Opaque);
+    PushGroup(Raster, Opaque, PushIndex);
   end;
   Inc(Raster.ClipDepth);
 end;
@@ -946,37 +970,84 @@ begin
   Raster.Canvas.Clip := Raster.ClipStack[Raster.ClipDepth];
 end;
 
-procedure PushGroup(var Raster: TRaster; const Item: TDisplayItem);
+{ Device pixels (of the surface drawn into) that what the group at
+  PushIndex draws can touch; False when that is not known. Empty when
+  it draws nothing. }
+function GroupContentBounds(const Raster: TRaster; PushIndex: Integer; out Bounds: TRectangle): Boolean;
 var
-  Group: PGroup;
-  Clip: TRegion;
-  Bounds: TRectangle;
+  Extent: TGroupExtent;
+begin
+  Bounds := EdgesRectangle(0, 0, 0, 0);
+  Extent := Raster.List.GroupExtents[PushIndex];
+  if not Extent.Bounded then
+    Exit(False);
+  Result := True;
+  if (Extent.Left >= Extent.Right) or (Extent.Top >= Extent.Bottom) then
+    Exit;
+  Bounds := EdgesRectangle(Floor(EnsureRange(DeviceX(Raster, Extent.Left), -DeviceLimit, DeviceLimit)),
+    Floor(EnsureRange(DeviceY(Raster, Extent.Top), -DeviceLimit, DeviceLimit)),
+    Ceil(EnsureRange(DeviceX(Raster, Extent.Right), -DeviceLimit, DeviceLimit)),
+    Ceil(EnsureRange(DeviceY(Raster, Extent.Bottom), -DeviceLimit, DeviceLimit)));
+  Bounds := InflateRectangle(Bounds, GroupInkMargin);
+end;
+
+{ A new group on top, drawing nowhere yet (Surface nil: straight below). }
+function NewGroup(var Raster: TRaster): PGroup;
 begin
   if Raster.GroupDepth >= Length(Raster.Groups) then
     SetLength(Raster.Groups, Raster.GroupDepth * 2 + 4);
-  Group := @Raster.Groups[Raster.GroupDepth];
+  Result := @Raster.Groups[Raster.GroupDepth];
   Inc(Raster.GroupDepth);
-  Group^.Canvas := Raster.Canvas;
+  Result^.Canvas := Raster.Canvas;
+  Result^.Opacity := 255;
+  Result^.MaskSurface.Pixels := nil;
+  Result^.Surface.Pixels := nil;
+  Result^.IsTransform := False;
+  Result^.Filter := -1;
+end;
+
+{ The group draws into a pooled surface over Area (device pixels of the
+  surface below), clipped to Clip (the same). False when there is no
+  memory (the group draws straight below). }
+function BeginGroupSurface(var Raster: TRaster; Group: PGroup; const Area: TRectangle; const Clip: TRegion): Boolean;
+var
+  Local: TRegion;
+begin
+  Result := TakePooledSurface(Group^.Surface, RectangleWidth(Area), RectangleHeight(Area));
+  if not Result then
+    Exit;
+  Group^.Left := Area.Left;
+  Group^.Top := Area.Top;
+  CopyRegion(Clip, Local);
+  OffsetRegion(Local, -Area.Left, -Area.Top);
+  BeginCanvas(Raster.Canvas, Group^.Surface);
+  SetCanvasClip(Raster.Canvas, Local);
+  Inc(Raster.ShiftX, Area.Left);
+  Inc(Raster.ShiftY, Area.Top);
+end;
+
+{ An opacity, mask or mask layer group (or a rounded clip's): its
+  surface covers what it draws within the clip. }
+procedure PushGroup(var Raster: TRaster; const Item: TDisplayItem; PushIndex: Integer);
+var
+  Group: PGroup;
+  Bounds, Content: TRectangle;
+  Nowhere: TRegion;
+begin
+  Group := NewGroup(Raster);
   Group^.Opacity := Round(EnsureRange(Item.Value, 0, 1) * 255);
-  Group^.MaskSurface.Pixels := nil;
-  Group^.Surface.Pixels := nil;
-  Group^.IsTransform := False;
   Bounds := RegionBounds(Raster.Canvas.Clip);
-  Group^.Left := Bounds.Left;
-  Group^.Top := Bounds.Top;
-  if RectangleIsEmpty(Bounds) or not CreateSurface(Group^.Surface, RectangleWidth(Bounds), RectangleHeight(Bounds),
-     ColorTransparent) then
+  { Drawn straight below when nothing shows (the clip is empty). }
+  if RectangleIsEmpty(Bounds) then
+    Exit;
+  if GroupContentBounds(Raster, PushIndex, Content) and not IntersectRectangles(Bounds, Content, Bounds) then
   begin
-    { Drawn straight below (nothing shows when the clip is empty). }
-    Group^.Surface.Pixels := nil;
+    { It draws nothing: a pixel of surface, clipped to nothing. }
+    SetRegionToRectangle(Nowhere, EdgesRectangle(0, 0, 0, 0));
+    BeginGroupSurface(Raster, Group, MakeRectangle(Bounds.Left, Bounds.Top, 1, 1), Nowhere);
     Exit;
   end;
-  CopyRegion(Raster.Canvas.Clip, Clip);
-  OffsetRegion(Clip, -Bounds.Left, -Bounds.Top);
-  BeginCanvas(Raster.Canvas, Group^.Surface);
-  SetCanvasClip(Raster.Canvas, Clip);
-  Inc(Raster.ShiftX, Bounds.Left);
-  Inc(Raster.ShiftY, Bounds.Top);
+  BeginGroupSurface(Raster, Group, Bounds, Raster.Canvas.Clip);
 end;
 
 { The top group's drawing is over: back to the surface below. False when
@@ -991,7 +1062,7 @@ begin
   Group := @Raster.Groups[Raster.GroupDepth];
   if Group^.Surface.Pixels = nil then
   begin
-    FreeSurface(Group^.MaskSurface);
+    ReturnPooledSurface(Group^.MaskSurface);
     Exit;
   end;
   Raster.Canvas := Group^.Canvas;
@@ -1008,9 +1079,11 @@ begin
     Exit;
   DrawSurface(Raster.Canvas, Group^.Surface, MakeRectangle(0, 0, Group^.Surface.Width, Group^.Surface.Height),
     Group^.Left, Group^.Top, True, Group^.Opacity);
-  FreeSurface(Group^.Surface);
+  ReturnPooledSurface(Group^.Surface);
 end;
 
+{ A rounded clip's group put below through the clip's coverage: what is
+  not covered is skipped, what is fully covered blended as it is. }
 procedure PopGroupMasked(var Raster: TRaster; const Shape: TCoverageShape);
 var
   Group: PGroup;
@@ -1018,7 +1091,8 @@ var
   Mask: array of Byte;
   Width, Height, Row, Column: LongInt;
   Source, Target: PLongWord;
-  Coverage: Byte;
+  Coverage: PByte;
+  Pixel: TColor;
 begin
   if not LeaveGroup(Raster, Group) then
     Exit;
@@ -1032,15 +1106,22 @@ begin
   begin
     Source := SurfaceLine(Group^.Surface, Row);
     Target := SurfaceLine(Raster.Canvas.Surface, Bounds.Top + Row) + Bounds.Left;
+    Coverage := @Mask[Row * Width];
     for Column := 0 to Width - 1 do
     begin
-      Coverage := Mask[Row * Width + Column];
       { The group was drawn within the clip already. }
-      if (Coverage > 0) and (AlphaOf(Source[Column]) > 0) then
-        Target[Column] := BlendColors(Target[Column], FadeColor(Source[Column], Coverage));
+      Pixel := Source[Column];
+      if (Coverage[Column] = 0) or (AlphaOf(Pixel) = 0) then
+        Continue;
+      if Coverage[Column] < 255 then
+        Pixel := FadeColor(Pixel, Coverage[Column]);
+      if AlphaOf(Pixel) = AlphaOpaque then
+        Target[Column] := Pixel
+      else
+        Target[Column] := BlendColors(Target[Column], Pixel);
     end;
   end;
-  FreeSurface(Group^.Surface);
+  ReturnPooledSurface(Group^.Surface);
 end;
 
 { ---- transforms ---- }
@@ -1083,14 +1164,7 @@ var
   Region: TRegion;
   Empty: Boolean;
 begin
-  if Raster.GroupDepth >= Length(Raster.Groups) then
-    SetLength(Raster.Groups, Raster.GroupDepth * 2 + 4);
-  Group := @Raster.Groups[Raster.GroupDepth];
-  Inc(Raster.GroupDepth);
-  Group^.Canvas := Raster.Canvas;
-  Group^.Opacity := 255;
-  Group^.MaskSurface.Pixels := nil;
-  Group^.Surface.Pixels := nil;
+  Group := NewGroup(Raster);
   Group^.IsTransform := True;
   Group^.DeviceTransform := DeviceTransformOf(Raster, AffineOf(Raster.List.Transforms[Item.Index]));
   Clip := RegionBounds(Raster.Canvas.Clip);
@@ -1131,15 +1205,14 @@ begin
   end;
   if Empty then
     Area := EdgesRectangle(0, 0, 1, 1);
-  Group^.Left := Area.Left;
-  Group^.Top := Area.Top;
-  if not CreateSurface(Group^.Surface, RectangleWidth(Area), RectangleHeight(Area), ColorTransparent) then
+  if not TakePooledSurface(Group^.Surface, RectangleWidth(Area), RectangleHeight(Area)) then
   begin
-    Group^.Surface.Pixels := nil;
     Empty := True;
     Area := EdgesRectangle(0, 0, 1, 1);
-    CreateSurface(Group^.Surface, 1, 1, ColorTransparent);
+    TakePooledSurface(Group^.Surface, 1, 1);
   end;
+  Group^.Left := Area.Left;
+  Group^.Top := Area.Top;
   BeginCanvas(Raster.Canvas, Group^.Surface);
   if Empty then
     SetRegionToRectangle(Region, EdgesRectangle(0, 0, 0, 0))
@@ -1187,7 +1260,7 @@ begin
     PreparePaint(Paint);
     FillShapeWithPaint(Raster.Canvas, Shape, FillRuleNonZero, Paint, 255, nil);
   end;
-  FreeSurface(Group^.Surface);
+  ReturnPooledSurface(Group^.Surface);
 end;
 
 { ---- masks (CSS Masking: mask-image layers, by alpha) ---- }
@@ -1206,7 +1279,7 @@ begin
   Group^.MaskSurface := Group^.Surface;
   Group^.Surface.Pixels := nil;
   CopyRegion(Raster.Canvas.Clip, Clip);
-  if not CreateSurface(Group^.Surface, Group^.MaskSurface.Width, Group^.MaskSurface.Height, ColorTransparent) then
+  if not TakePooledSurface(Group^.Surface, Group^.MaskSurface.Width, Group^.MaskSurface.Height) then
   begin
     { No room for the content: it is drawn into the mask surface and
       dropped at the pop. }
@@ -1218,29 +1291,23 @@ begin
   SetCanvasClip(Raster.Canvas, Clip);
 end;
 
-{ A filter's group covers the clip and, for a blur, as far around it as
-  the blur reaches (what is drawn there blurs into the clip); the clips
+{ A filter's group covers what it draws within the clip and, for a
+  blur, as far around that as the blur reaches (what is drawn there
+  blurs into the clip; a blur sees nothing past the surface's edges, so
+  the transparent margin around the content changes nothing); the clips
   of the surface below apply when it is put back. }
 const
   { The largest side of a filter group's surface. }
   MaximumFilterSide = 8192;
 
-procedure PushFilter(var Raster: TRaster; const Item: TDisplayItem);
+procedure PushFilter(var Raster: TRaster; const Item: TDisplayItem; PushIndex: Integer);
 var
   Group: PGroup;
-  Bounds: TRectangle;
+  Bounds, Content: TRectangle;
   Operations: TFilterOperations;
   Index, Margin: LongInt;
 begin
-  if Raster.GroupDepth >= Length(Raster.Groups) then
-    SetLength(Raster.Groups, Raster.GroupDepth * 2 + 4);
-  Group := @Raster.Groups[Raster.GroupDepth];
-  Inc(Raster.GroupDepth);
-  Group^.Canvas := Raster.Canvas;
-  Group^.Opacity := 255;
-  Group^.MaskSurface.Pixels := nil;
-  Group^.Surface.Pixels := nil;
-  Group^.IsTransform := False;
+  Group := NewGroup(Raster);
   Group^.Filter := Item.Index;
   Operations := Raster.List.Filters[Item.Index];
   Margin := 0;
@@ -1251,10 +1318,13 @@ begin
   if RectangleIsEmpty(Bounds) then
     Exit;
   Bounds := InflateRectangle(Bounds, Margin);
+  if GroupContentBounds(Raster, PushIndex, Content) and
+     not IntersectRectangles(Bounds, InflateRectangle(Content, Margin), Bounds) then
+    Bounds := MakeRectangle(Bounds.Left, Bounds.Top, 1, 1);
   Group^.Left := Bounds.Left;
   Group^.Top := Bounds.Top;
   if (RectangleWidth(Bounds) > MaximumFilterSide) or (RectangleHeight(Bounds) > MaximumFilterSide) or
-     not CreateSurface(Group^.Surface, RectangleWidth(Bounds), RectangleHeight(Bounds), ColorTransparent) then
+     not TakePooledSurface(Group^.Surface, RectangleWidth(Bounds), RectangleHeight(Bounds)) then
   begin
     Group^.Surface.Pixels := nil;
     Exit;
@@ -1275,12 +1345,12 @@ begin
   ApplyFilterOperations(Group^.Surface, Raster.List.Filters[Group^.Filter], Raster.View.Scale);
   DrawSurface(Raster.Canvas, Group^.Surface, MakeRectangle(0, 0, Group^.Surface.Width, Group^.Surface.Height),
     Group^.Left, Group^.Top, True, 255);
-  FreeSurface(Group^.Surface);
+  ReturnPooledSurface(Group^.Surface);
 end;
 
-procedure PushMaskLayer(var Raster: TRaster; const Item: TDisplayItem);
+procedure PushMaskLayer(var Raster: TRaster; const Item: TDisplayItem; PushIndex: Integer);
 begin
-  PushGroup(Raster, Item);
+  PushGroup(Raster, Item, PushIndex);
   Raster.Groups[Raster.GroupDepth - 1].Composite := TMaskComposite(Item.Index);
 end;
 
@@ -1324,7 +1394,7 @@ begin
       Line[Column] := ArgbColor(Byte(CompositeAlpha(SourceAlpha, AlphaOf(Line[Column]), Group^.Composite)), 0, 0, 0);
     end;
   end;
-  FreeSurface(Group^.Surface);
+  ReturnPooledSurface(Group^.Surface);
 end;
 
 procedure PopMask(var Raster: TRaster);
@@ -1349,8 +1419,8 @@ begin
           Target[Column] := BlendColors(Target[Column], FadeColor(Source[Column], Alpha));
       end;
     end;
-  FreeSurface(Group^.MaskSurface);
-  FreeSurface(Group^.Surface);
+  ReturnPooledSurface(Group^.MaskSurface);
+  ReturnPooledSurface(Group^.Surface);
 end;
 
 { A frame's document paints itself into the frame's content box, within
@@ -1368,6 +1438,96 @@ begin
   Content.PaintInto(Raster.Canvas.Surface, Bounds.Left, Bounds.Top, Clip);
 end;
 
+{ ---- folding opacity into an item ---- }
+
+{ Whether an item drawn at an opacity looks as it would in a group of
+  that opacity: it touches no pixel twice (borders meet at the corners)
+  and its drawing takes an opacity. Not text: glyphs are blended
+  gamma-correct over an opaque surface but plainly into a group's
+  transparent one, so their edges would come out a little darker. }
+function TakesOpacity(const Raster: TRaster; const Item: TDisplayItem): Boolean;
+begin
+  case Item.Kind of
+    diRectangle, diGradient, diShadow:
+      Result := True;
+    diImage:
+      Result := ImageTakesOpacity(Raster, Item);
+  else
+    Result := False;
+  end;
+end;
+
+{ Gecko's ApplyOpacityToChildren: an opacity group holding one item that
+  takes an opacity is drawn without a group, the item at the group's
+  opacity. The item's index, else -1. }
+function FoldableItem(const Raster: TRaster; PushIndex: Integer): Integer;
+var
+  Index, PopIndex: Integer;
+begin
+  Result := -1;
+  PopIndex := Raster.List.GroupExtents[PushIndex].PopIndex;
+  if PopIndex < 0 then
+    Exit;
+  for Index := PushIndex + 1 to PopIndex - 1 do
+  begin
+    if Raster.List.Items[Index].Kind = diHitArea then
+      Continue;
+    if Result >= 0 then
+      Exit(-1);
+    Result := Index;
+  end;
+  if (Result >= 0) and not TakesOpacity(Raster, Raster.List.Items[Result]) then
+    Result := -1;
+end;
+
+procedure DrawItem(var Raster: TRaster; const Item: TDisplayItem);
+begin
+  if not ItemVisible(Raster, Item) then
+    Exit;
+  case Item.Kind of
+    diRectangle: FillBox(Raster, Item.X, Item.Y, Item.Width, Item.Height, Item.Color, Item.Index);
+    diBorder: DrawBorder(Raster, Item);
+    diText: DrawText(Raster, Item);
+    diImage: DrawImage(Raster, Item);
+    diGradient: DrawGradient(Raster, Item);
+    diShadow: DrawShadow(Raster, Item);
+    diControl: DrawControl(Raster, Item);
+    diControlText: DrawControlText(Raster, Item);
+    diFrame: DrawFrame(Raster, Item);
+  end;
+end;
+
+{ An opacity group from PushIndex: nothing at all when it is fully
+  transparent, its one item at its opacity when that can be, else a
+  group. Index: the last item dealt with. }
+procedure BeginOpacity(var Raster: TRaster; PushIndex: Integer; out Index: Integer);
+var
+  Item: PDisplayItem;
+  Folded, PopIndex: Integer;
+begin
+  Item := @Raster.List.Items[PushIndex];
+  Index := PushIndex;
+  PopIndex := Raster.List.GroupExtents[PushIndex].PopIndex;
+  if PopIndex >= 0 then
+  begin
+    if Round(EnsureRange(Item^.Value, 0, 1) * 255) = 0 then
+    begin
+      Index := PopIndex;
+      Exit;
+    end;
+    Folded := FoldableItem(Raster, PushIndex);
+    if Folded >= 0 then
+    begin
+      Raster.ItemOpacity := Round(EnsureRange(Item^.Value, 0, 1) * 255);
+      DrawItem(Raster, Raster.List.Items[Folded]);
+      Raster.ItemOpacity := 255;
+      Index := PopIndex;
+      Exit;
+    end;
+  end;
+  PushGroup(Raster, Item^, PushIndex);
+end;
+
 procedure RasterizeDisplayList(List: TDisplayList; const Surface: TSurface; const View: TRasterView);
 var
   Raster: TRaster;
@@ -1375,6 +1535,7 @@ var
   Item: PDisplayItem;
   Region: TRegion;
 begin
+  EnsureGroupExtents(List);
   Raster.List := List;
   Raster.View := View;
   Raster.ClipStack := nil;
@@ -1389,21 +1550,23 @@ begin
   Raster.ShiftX := View.ShiftX;
   Raster.ShiftY := View.ShiftY;
   Raster.Glyphs := nil;
+  Raster.ItemOpacity := 255;
   BeginCanvas(Raster.Canvas, Surface);
   SetRegionToRectangle(Region, View.Damage);
   SetCanvasClip(Raster.Canvas, Region);
   FillRectangle(Raster.Canvas, View.Damage, List.CanvasColor);
-  for Index := 0 to List.Count - 1 do
+  Index := 0;
+  while Index < List.Count do
   begin
     Item := @List.Items[Index];
     case Item^.Kind of
-      diPushClip: PushClip(Raster, Item^);
+      diPushClip: PushClip(Raster, Item^, Index);
       diPopClip: PopClip(Raster);
-      diPushOpacity: PushGroup(Raster, Item^);
+      diPushOpacity: BeginOpacity(Raster, Index, Index);
       diPopOpacity: PopGroup(Raster);
-      diPushMask: PushGroup(Raster, Item^);
-      diPushMaskLayer: PushMaskLayer(Raster, Item^);
-      diPushFilter: PushFilter(Raster, Item^);
+      diPushMask: PushGroup(Raster, Item^, Index);
+      diPushMaskLayer: PushMaskLayer(Raster, Item^, Index);
+      diPushFilter: PushFilter(Raster, Item^, Index);
       diPopFilter: PopFilter(Raster);
       diPopMaskLayer: PopMaskLayer(Raster);
       diPushTransform: PushTransform(Raster, Item^);
@@ -1415,20 +1578,9 @@ begin
       diPopFixed, diPopSticky: PopOrigin(Raster);
       diHitArea: ;
     else
-      if not ItemVisible(Raster, Item^) then
-        Continue;
-      case Item^.Kind of
-        diRectangle: FillBox(Raster, Item^.X, Item^.Y, Item^.Width, Item^.Height, Item^.Color, Item^.Index);
-        diBorder: DrawBorder(Raster, Item^);
-        diText: DrawText(Raster, Item^);
-        diImage: DrawImage(Raster, Item^);
-        diGradient: DrawGradient(Raster, Item^);
-        diShadow: DrawShadow(Raster, Item^);
-        diControl: DrawControl(Raster, Item^);
-        diControlText: DrawControlText(Raster, Item^);
-        diFrame: DrawFrame(Raster, Item^);
-      end;
+      DrawItem(Raster, Item^);
     end;
+    Inc(Index);
   end;
   while Raster.GroupDepth > 0 do
     if Raster.Groups[Raster.GroupDepth - 1].IsTransform then
