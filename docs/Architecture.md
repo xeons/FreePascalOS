@@ -17123,7 +17123,10 @@ read, so each must cost what the change touched, not the page:
 - A style change that differs only in sizes, offsets, margins, padding,
   borders, flex or grid properties (and painting) keeps the box's
   children and lays the box out again; a box moved over to a rebuilt
-  parent stays dirty if it was.
+  parent stays dirty if it was, and keeps its measured size. A flex or
+  grid box building its children again takes back its items' boxes
+  (boxes are otherwise not moved to or from those parents: their
+  children are blockified and wrapped for them).
 - Text and children changed inside a `display: none` subtree change no
   boxes.
 - Scrollable overflow (`Web.Layout.Overflow`): each box keeps the right
