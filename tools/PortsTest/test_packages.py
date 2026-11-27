@@ -228,6 +228,14 @@ class ImageTests(PackageMaker):
     def test_list_file(self):
         path = self.write("image.list", "# comment\nhello\n\n  ptop  # trailing\n")
         self.assertEqual(image.read_list(path), ["hello", "ptop"])
+        path = self.write("image.list", "game\ngame-data with game  # only with the game\n")
+        entries = image.read_entries(path)
+        self.assertEqual([(entry.name, entry.companion) for entry in entries],
+                         [("game", None), ("game-data", "game")])
+        self.assertEqual(image.read_list(path), ["game", "game-data"])
+        path = self.write("image.list", "game-data without game\n")
+        with self.assertRaises(image.ImageError):
+            image.read_entries(path)
 
 
 class Ed25519Tests(unittest.TestCase):

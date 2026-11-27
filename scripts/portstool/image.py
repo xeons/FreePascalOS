@@ -24,7 +24,10 @@ the system's shell scripts); a package with a post-install script says
 so.
 
 ports/image.list names the ports the system disk carries: one port a
-line (name, name@flavor or category/name), # comments.
+line (name, name@flavor or category/name), # comments. "PORT with
+OTHER" puts PORT on the disk only when OTHER goes on it (OTHER's package
+could be built here): data that is no use without a program, such as
+game data without the game, is left out with it.
 """
 
 import os
@@ -38,14 +41,33 @@ class ImageError(PortError):
     pass
 
 
-def read_list(path):
-    names = []
+class ImageEntry:
+    """A line of the list: a port, and the port it goes with (or None)."""
+
+    def __init__(self, name, companion=None):
+        self.name = name
+        self.companion = companion
+
+
+def read_entries(path):
+    entries = []
     with open(path, encoding="utf-8") as stream:
-        for line in stream:
-            line = line.split("#", 1)[0].strip()
-            if line:
-                names.append(line)
-    return names
+        for number, line in enumerate(stream, 1):
+            words = line.split("#", 1)[0].split()
+            if not words:
+                continue
+            if len(words) == 1:
+                entries.append(ImageEntry(words[0]))
+            elif len(words) == 3 and words[1] == "with":
+                entries.append(ImageEntry(words[0], words[2]))
+            else:
+                raise ImageError(f"{path}:{number}: PORT or PORT with OTHER, not {line.strip()!r}")
+    return entries
+
+
+def read_list(path):
+    """Every port the list names (those that go with another too)."""
+    return [entry.name for entry in read_entries(path)]
 
 
 def owners(root):

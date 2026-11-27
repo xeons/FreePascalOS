@@ -341,6 +341,24 @@ extern "C" {
 /* On an event descriptor: 1 non-blocking, 0 blocking. */
 #define FPOS_CONTROL_SET_NON_BLOCKING 320
 
+/* Audio output requests (FPOS_CALL_CONTROL_HANDLE on /dev/audio; each
+   open is a stream of its own). A format is the rate << 16 | the
+   channels << 8 | an FPOS_AUDIO_SAMPLE_* kind. */
+#define FPOS_CONTROL_AUDIO_GET_FORMAT 100
+#define FPOS_CONTROL_AUDIO_SET_FORMAT 101
+#define FPOS_CONTROL_AUDIO_GET_VOLUME 102
+#define FPOS_CONTROL_AUDIO_SET_VOLUME 103
+#define FPOS_CONTROL_AUDIO_DRAIN 104
+/* Bytes written to the stream and not yet mixed. */
+#define FPOS_CONTROL_AUDIO_GET_QUEUED 107
+/* Frames of the stream mixed so far. */
+#define FPOS_CONTROL_AUDIO_GET_POSITION 108
+#define FPOS_AUDIO_SAMPLE_UNSIGNED8 1
+#define FPOS_AUDIO_SAMPLE_SIGNED16 2
+#define FPOS_AUDIO_SAMPLE_SIGNED24 3
+#define FPOS_AUDIO_SAMPLE_SIGNED32 4
+#define FPOS_AUDIO_SAMPLE_FLOAT32 5
+
 /* Event descriptor flags (Abi.EventDescriptors.inc). */
 #define FPOS_EVENT_DESCRIPTOR_NON_BLOCKING 0x800
 #define FPOS_EVENT_COUNTER_SEMAPHORE 1
