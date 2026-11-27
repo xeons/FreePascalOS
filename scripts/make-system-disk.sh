@@ -25,7 +25,7 @@
 #   /bin   programs (from <user-build-directory>/bin)
 #   /app   graphical programs, a folder each (from <user-build-directory>/app)
 #   /lib   shared libraries (from <user-build-directory>/lib)
-#   /etc   configuration (from userland/etc), with the service
+#   /etc   configuration (from userland/data/etc), with the service
 #          definitions in /etc/services and the system's settings in
 #          /etc/settings (empty: programs keep what root changes there)
 #   /var/log  the services' logs (the service manager writes them)
@@ -55,7 +55,7 @@ set -euo pipefail
 user_build_directory="$1"
 output_image="$2"
 # The image is at least 64 MiB, more when what goes on it needs it (the
-# fonts, userland/fonts put in by scripts/install-fonts.py):
+# fonts, userland/data/fonts put in by scripts/install-fonts.py):
 # its contents and a seventh more for the file system, with 24 MiB to
 # spare, in whole 8 MiB.
 minimum_image_size_mib=64
@@ -107,9 +107,9 @@ if [[ -d "$user_build_directory/fonts" ]]; then
 fi
 # The pointer's shapes, which the display server reads (it has built-in
 # ones for any that are missing).
-if compgen -G "$source_directory/userland/pointers/*.pointer" > /dev/null; then
+if compgen -G "$source_directory/userland/data/pointers/*.pointer" > /dev/null; then
     mkdir -p "$staging_directory/lib/pointers"
-    cp "$source_directory"/userland/pointers/*.pointer "$staging_directory/lib/pointers/"
+    cp "$source_directory"/userland/data/pointers/*.pointer "$staging_directory/lib/pointers/"
 fi
 # The pointer's pictures in several sizes (drawn at build time), which
 # the display server prefers to the patterns above.
@@ -136,8 +136,8 @@ if [[ -d "$user_build_directory/fpc-root" && "${NATIVE_FPC:-yes}" == yes ]]; the
     cp -r "$user_build_directory"/fpc-root/. "$staging_directory/"
     find "$staging_directory/usr/lib/fpc" -name .staged -delete
 fi
-if compgen -G "$source_directory/userland/etc/*" > /dev/null; then
-    cp -r "$source_directory"/userland/etc/* "$staging_directory/etc/"
+if compgen -G "$source_directory/userland/data/etc/*" > /dev/null; then
+    cp -r "$source_directory"/userland/data/etc/* "$staging_directory/etc/"
 fi
 # Ported software installed as packages (ports/ports.mk makes this
 # folder: ports/image.list's packages and pkg's database of them).

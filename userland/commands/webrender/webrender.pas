@@ -25,7 +25,7 @@
 
   -w the viewport width in CSS pixels (800), -h its height (600; with
   -t the whole document is drawn), -s the device scale (1), -f the font
-  directory (userland/fonts on the host, /lib/fonts on the system), -l
+  directory (userland/data/fonts on the host, /lib/fonts on the system), -l
   prints the layout tree. Images the page refers to with relative URLs
   are read from beside the file.
 }

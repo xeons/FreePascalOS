@@ -19,7 +19,7 @@
 {
   NetstatTest - checks the plain logic of netstat and ss on the host
   (make netstat-test): the ports list's parser (Netstat.Services, over
-  the real userland/etc/ports and odd lines) and ss's filters
+  the real userland/data/etc/ports and odd lines) and ss's filters
   (Ss.Filters: states, port and address conditions, and, or, not,
   parentheses, errors).
 

@@ -26,7 +26,7 @@
   who logged in: a shell in a pseudo-terminal, a command, or the SFTP
   subsystem. Host keys missing from /etc/ssh are made on the first
   start. The service manager runs it (/etc/services/sshd.service); it
-  must run as root. Units in userland/sshd, the protocol in libssh.
+  must run as root. Units in userland/system/sshd, the protocol in libssh.
 
     -f CONFIG     the configuration file (/etc/ssh/sshd_config)
     -p PORT       listen on PORT instead of the configured one

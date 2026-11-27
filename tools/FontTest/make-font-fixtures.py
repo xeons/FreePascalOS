@@ -509,7 +509,7 @@ def add_layout_references(references, name, path, pairs, sizes):
 SAMPLE_TEXT = 'AaBbGgHhOoQqRrSsWwXxeg@&%019?.,;'
 
 OPENTYPE_FONTS = [
-    # name, file in the fonts directory (userland/fonts), face index, characters rendered
+    # name, file in the fonts directory (userland/data/fonts), face index, characters rendered
     ('source-sans', 'source-sans-3/SourceSans3-Regular.otf', 0, 'AaBbGgOoQqRrSs&@019'),
     ('nimbus-sans', 'nimbus-sans/NimbusSans-Regular.otf', 0, 'AaGgOoRrSs&@019'),
     ('cantarell', 'cantarell/Cantarell-VF.otf', 0, 'AaGgOoRrSs&019'),

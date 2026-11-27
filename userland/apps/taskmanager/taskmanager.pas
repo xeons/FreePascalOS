@@ -55,7 +55,7 @@
     not-responding PID      a program asked to end still runs
     exit                    the program ends
 
-  The units are in userland/taskmanager: TaskManager.MainWindow (menus,
+  The units are in userland/apps/taskmanager: TaskManager.MainWindow (menus,
   tabs, status bar, the update timer), TaskManager.ProgramsPage (and
   TaskManager.ProgramIcons, its windows' icons),
   TaskManager.ProcessesPage, TaskManager.PerformancePage,

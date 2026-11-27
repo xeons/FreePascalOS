@@ -311,7 +311,7 @@ begin
   Run := TReftestRun.Create;
   try
     Run.PageSeconds := 10;
-    Run.FontDirectory := 'userland/fonts';
+    Run.FontDirectory := 'userland/data/fonts';
     Index := 1;
     while Index <= ParamCount do
     begin

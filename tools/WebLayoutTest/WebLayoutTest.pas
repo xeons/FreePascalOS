@@ -30,7 +30,7 @@
   matching the full paint), the speed and memory of a large page, and
   font matching with the system's fonts and configuration
   (WebLayoutTest.SystemFonts; WEB_HOST_FONTS names the fonts directory,
-  userland/fonts).
+  userland/data/fonts).
 }
 program WebLayoutTest;
 

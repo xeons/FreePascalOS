@@ -30,7 +30,7 @@
   come from the agent (SSH_AUTH_SOCK) and ~/.ssh/id_ed25519 and
   ~/.ssh/id_ecdsa (or -i), then keyboard-interactive and the password
   are tried. The server's host key is checked against ~/.ssh/known_hosts
-  (a new one is asked about). Units in userland/ssh, the protocol in
+  (a new one is asked about). Units in userland/commands/ssh, the protocol in
   libssh. The exit status is the remote command's, 255 for an error.
 
     -p PORT    the server's port (22)

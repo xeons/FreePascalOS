@@ -18,7 +18,7 @@
 
 {
   IconTest - checks on the host (make icon-test) the icon theme and the
-  pointer's pictures as the build drew them (userland/icons), read with
+  pointer's pictures as the build drew them (userland/data/icons), read with
   libimage as the system reads them:
 
     IconTest ICON_DIRECTORY POINTER_DIRECTORY

@@ -54,7 +54,7 @@
   a shutdown; only the first program, which the kernel started, watches
   for shutdowns.
 
-  The units are in userland/servicemanager: Services.Definitions (the
+  The units are in userland/system/servicemanager: Services.Definitions (the
   files), Services.Catalog (the table, needs and order), Services.Launch
   (starting a program), Services.Supervisor (states, restarts,
   readiness), Services.Shutdown (stopping in order), Services.Control

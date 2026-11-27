@@ -25,7 +25,7 @@
   dragging, file formats by name, the undo history. The pixels
   (PaintTest.Pixels): flood fill, shapes, strokes, the selection, the
   Image menu's transforms and the zoomed view. The units are Paint's
-  own (userland/paint) and libimage's and libdrawing's, which need
+  own (userland/apps/paint) and libimage's and libdrawing's, which need
   nothing of the system.
 
   Every check prints a line; the last reads "N passed, M failed", and

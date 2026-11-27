@@ -36,7 +36,7 @@
   may be an IPv6 address (::1, or [::1]); -4 and -6 keep to one IP
   version, and -l -6 listens on :: (without it nc listens on IPv4).
 
-  The pieces are in userland/nc (Netcat.*).
+  The pieces are in userland/commands/nc (Netcat.*).
 }
 program nc;
 

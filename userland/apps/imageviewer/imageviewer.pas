@@ -52,7 +52,7 @@
       saved PATH FORMAT QUALITY
     exit
 
-  The units are in userland/imageviewer: ImageViewer.ViewGeometry (zoom
+  The units are in userland/apps/imageviewer: ImageViewer.ViewGeometry (zoom
   and pan arithmetic), ImageViewer.Orientations (turns),
   ImageViewer.FolderImages (next and previous), ImageViewer.ImageView
   (the scrolling view), ImageViewer.Properties, ImageViewer.Saving,

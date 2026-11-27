@@ -95,7 +95,7 @@ PKG_TEST := build/tools/PkgTest
 PKG_TEST_UNITS := build/tools/pkg-test-units
 PKG_TEST_FIXTURES := build/tools/pkg-fixtures
 PKG_TEST_SOURCES := $(wildcard tools/PkgTest/*.pas) tools/CryptoTest/TestChecks.pas \
-	$(filter-out %/Pkg.System.pas,$(wildcard userland/pkg/*.pas)) \
+	$(filter-out %/Pkg.System.pas,$(wildcard userland/commands/pkg/*.pas)) \
 	$(filter-out %/Archive.Contents.pas,$(wildcard userland/lib/archive/*.pas)) \
 	$(filter-out %/Compression.Contents.pas,$(wildcard userland/lib/compression/*.pas)) \
 	$(filter-out %/Crypto.Contents.pas,$(wildcard userland/lib/cryptography/*.pas))
@@ -108,7 +108,7 @@ $(PKG_TEST_FIXTURES)/manifest.txt: tools/PkgTest/make-fixtures.py tools/PortsTes
 
 $(PKG_TEST): $(PKG_TEST_SOURCES)
 	@mkdir -p $(PKG_TEST_UNITS)
-	fpc -Mobjfpc -O2 -vew -Futools/PkgTest -Futools/CryptoTest -Fuuserland/pkg -Fuuserland/lib/archive \
+	fpc -Mobjfpc -O2 -vew -Futools/PkgTest -Futools/CryptoTest -Fuuserland/commands/pkg -Fuuserland/lib/archive \
 		-Fuuserland/lib/compression -Fuuserland/lib/cryptography -Fushared -Fishared -FU$(PKG_TEST_UNITS) \
 		-o$@ tools/PkgTest/PkgTest.pas
 

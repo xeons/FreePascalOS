@@ -71,7 +71,7 @@
     answer yes|no|cancel    the answer to saving changes
     exit                    the program ends
 
-  The units are in userland/paint: the document and its undo history
+  The units are in userland/apps/paint: the document and its undo history
   (Paint.Document, Paint.UndoHistory), the selection
   (Paint.Selection, Paint.SelectionEditing), the tools (Paint.Tools and
   the units of each kind, Paint.ToolFactory), what they draw

@@ -19,7 +19,7 @@
 {
   Font matching with the system's fonts and configuration: the fonts
   kept in the source tree (the directory in WEB_HOST_FONTS,
-  userland/fonts) and userland/etc/fonts.conf.
+  userland/data/fonts) and userland/data/etc/fonts.conf.
   Arial must be Liberation Sans with Arial's advances, Times New Roman
   Liberation Serif, monospace Liberation Mono, system-ui DejaVu Sans;
   text mixing Latin, Japanese and emoji must find a face with a glyph
@@ -123,7 +123,7 @@ begin
     Exit;
   end;
   ClearTextFonts;
-  FontConfigurationPath := 'userland/etc/fonts.conf';
+  FontConfigurationPath := 'userland/data/etc/fonts.conf';
   ResetSystemFontConfiguration;
   SetFontDirectory(Directory);
   try

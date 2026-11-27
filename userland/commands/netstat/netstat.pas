@@ -36,7 +36,7 @@
   IP version. Without -n hosts are named by /etc/hosts or a reverse DNS
   lookup (a short timeout) and ports by /etc/ports (Netstat.Names).
 
-  The pieces are in userland/netstat (Netstat.*).
+  The pieces are in userland/commands/netstat (Netstat.*).
 }
 program netstat;
 

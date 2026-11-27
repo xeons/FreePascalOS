@@ -41,7 +41,7 @@
     kept N V                  the change kept for the next boot
     started COMMAND, exit
 
-  The units are in userland/volumecontrol: VolumeControl.Levels (peaks
+  The units are in userland/apps/volumecontrol: VolumeControl.Levels (peaks
   and the meters' scale), VolumeControl.PeakMonitor (the monitor input),
   VolumeControl.OutputRow, VolumeControl.MainWindow,
   VolumeControl.Settings, VolumeControl.Launching and

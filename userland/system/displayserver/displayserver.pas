@@ -45,7 +45,7 @@
   pixels left; it prints any difference, and a count after each drag
   of a title bar.
 
-  The units are in userland/displayserver: Server.Theme (colours and
+  The units are in userland/system/displayserver: Server.Theme (colours and
   metrics), Server.Screen (the displays and their back buffers),
   Server.Desktop (where they are, logical units and pixels),
   Server.Cursor, Server.Presentation and Server.PointerPresenting

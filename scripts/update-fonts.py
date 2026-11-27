@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Refreshes the fonts kept in the source tree (userland/fonts) from
+"""Refreshes the fonts kept in the source tree (userland/data/fonts) from
 the machine's font packages; run by hand (make update-fonts), never by
 the build.
 

@@ -59,7 +59,7 @@
   and about:hang makes it stop answering: for tests of what the browser
   does then (the tab shows it crashed, or a bar to wait or stop it).
 
-  The units are in userland/browser (Browser.MainWindow and its parts).
+  The units are in userland/apps/browser (Browser.MainWindow and its parts).
 }
 program Browser;
 

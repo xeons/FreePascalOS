@@ -15,7 +15,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """The package manifest (+MANIFEST): what a package is and every path it
-installs, one line each, as pkg reads it (userland/pkg/Pkg.Manifests.pas).
+installs, one line each, as pkg reads it (userland/commands/pkg/Pkg.Manifests.pas).
 
     format 1
     name NAME                  version VERSION        revision N

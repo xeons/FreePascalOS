@@ -23,7 +23,7 @@
 
   Speaks SFTP version 3 on its standard input and output, as the user
   it runs as: sshd starts it for "subsystem sftp", which OpenSSH's sftp
-  and (since OpenSSH 9) scp ask for. Units in userland/sftp-server.
+  and (since OpenSSH 9) scp ask for. Units in userland/system/sftp-server.
 }
 program sftp_server;
 

@@ -82,7 +82,7 @@ Rendering:
   `tables-colspan`).
 - Helvetica and Helvetica Neue are Nimbus Sans (URW's Helvetica clone,
   as fontconfig and Firefox take them); webbrowse reads the system font
-  configuration (`userland/etc/fonts.conf`).
+  configuration (`userland/data/etc/fonts.conf`).
 - The preload scanner no longer fetches again what the parser already
   asked for (main.css and base.js came twice).
 

@@ -38,7 +38,7 @@
   credentials (given, or from ~/.netrc); gzip bodies are decoded with
   --compression. -r fetches a site recursively (-l, -np, -A, -R,
   robots.txt), -p a page's requisites, -k converts the links of what
-  was fetched. The units are in userland/wget; what is HTTP and not
+  was fetched. The units are in userland/commands/wget; what is HTTP and not
   wget's own is libhttp's (userland/lib/http).
 
   Exit status as GNU wget: 0 success, 1 generic error, 2 bad options,

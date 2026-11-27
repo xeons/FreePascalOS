@@ -67,7 +67,7 @@
   shows), "session: screen unlocked by NAME", "session: lock clock
   HH:MM", "session: suspending", "session: resumed".
 
-  Its units are in userland/sessionmanager: Session.LoginWindow,
+  Its units are in userland/system/sessionmanager: Session.LoginWindow,
   Session.UserSession, Session.UserSettings, Session.LockWindow,
   Session.ScreenLock, Session.Suspend, Session.Requests and
   Session.Report.

@@ -30,7 +30,7 @@
   and paints them into sections the program shows; the network, files,
   cookies and storage it asks the program for. It restricts itself
   before any page runs (WebContent.Sandbox). The units are in
-  userland/webcontent.
+  userland/system/webcontent.
 }
 program WebContent;
 

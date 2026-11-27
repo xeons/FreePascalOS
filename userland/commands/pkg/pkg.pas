@@ -27,7 +27,7 @@
   /etc/pkg/repositories and their indexes checked with the Ed25519 keys
   in /etc/pkg/keys. Installing is a transaction: everything is checked
   and staged first, then renamed into place, and undone on failure.
-  The units are in userland/pkg (Pkg.*).
+  The units are in userland/commands/pkg (Pkg.*).
 
   Exit status: 0 done, 1 something failed or was refused, 2 bad usage.
 }

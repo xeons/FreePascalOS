@@ -23,7 +23,7 @@ font directory (/lib/fonts on the system disk).
 LIST (scripts/fonts.list) says which families and files each set
 takes (a section's "sets", and its "<set>-files" when it gives the set
 only some of its files); the files are taken from FONTS-DIRECTORY
-(userland/fonts), each family's directory with its LICENSE and SOURCE,
+(userland/data/fonts), each family's directory with its LICENSE and SOURCE,
 never from the machine's own fonts. A file the list names that is not
 in FONTS-DIRECTORY, or a family without its LICENSE, stops the build.
 
@@ -122,7 +122,7 @@ def install(list_path, fonts_directory, output, font_set):
         row[2] = ' '.join(sorted(files))
         manifest[directory] = row
     fontlist.write_manifest(output, manifest,
-                            '# The system\'s fonts (the %s set of userland/fonts, scripts/fonts.list):\n'
+                            '# The system\'s fonts (the %s set of userland/data/fonts, scripts/fonts.list):\n'
                             '# family\tdirectory\tfiles\tlicence\tversion\tpackage\n' % font_set)
     installed.append(fontlist.MANIFEST_NAME)
     with open(os.path.join(output, RECORD_NAME), 'w') as handle:

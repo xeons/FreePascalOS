@@ -58,7 +58,7 @@
     font TENTHS WEIGHT FAMILY  a face chosen
     answer yes|no|cancel  the answer to saving changes
     exit                  the program ends
-  The units are in userland/notepad: Notepad.Files (reading and
+  The units are in userland/apps/notepad: Notepad.Files (reading and
   writing), Notepad.DocumentWindow (the file: New, Open, Save, the
   title, asking to save), Notepad.MainWindow (menus, status bar, find
   and replace, the format), Notepad.Settings (what it remembers),

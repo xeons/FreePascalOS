@@ -30,7 +30,7 @@
   appear, and writes each interface's state to
   /var/lib/network/NAME.state for other programs. Asked to end, it gives
   its leases back (DHCPRELEASE) and ends with status 0. Units in
-  userland/network.
+  userland/system/network.
 }
 program network;
 

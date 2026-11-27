@@ -18,7 +18,7 @@
 
 {
   The pointer's pictures: each shape as a cursor file in /lib/pointers
-  (arrow.cur, text-beam.cur, hand.cur...; userland/icons draws them)
+  (arrow.cur, text-beam.cur, hand.cur...; userland/data/icons draws them)
   holding it in several sizes with alpha, each with its hotspot.
 
   The picture for a screen is the one for its scale: 32 pixels across

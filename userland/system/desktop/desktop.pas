@@ -93,7 +93,7 @@
     wallpaper IMAGE       the wallpaper image chosen (-w, or kept, or
                           changed in the settings)
 
-  The units are in userland/desktop: Desktop.Shell (putting it
+  The units are in userland/system/desktop: Desktop.Shell (putting it
   together), Desktop.DesktopWindow and Desktop.Wallpaper (the desktop),
   Desktop.Programs (what it offers and starting it), Desktop.Taskbar,
   Desktop.StartButton, Desktop.StartMenu, Desktop.TaskButtons,

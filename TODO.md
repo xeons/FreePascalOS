@@ -899,7 +899,7 @@ normalized (0-65535), not pixels.
       Liberation (Arial/Times New Roman/Courier New metrics), DejaVu, Noto
       with 34 scripts, CJK and colour emoji, Source Sans 3, Cantarell, Roboto,
       Open Sans, Hack, Inconsolata, the URW base 35, Droid Sans Fallback
-- [x] The fonts kept in the repository (userland/fonts/<family>/ with LICENSE
+- [x] The fonts kept in the repository (userland/data/fonts/<family>/ with LICENSE
       and SOURCE, MANIFEST); the build installs them from there
       (scripts/install-fonts.py, FONT_SET full/core/base), never from the
       host; make update-fonts (scripts/update-fonts.py) refreshes them from

@@ -61,7 +61,7 @@ from firefox_reference import ReferenceBrowser  # noqa: E402 (next to this scrip
 
 REPOSITORY = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 WEBBROWSE = os.path.join(REPOSITORY, 'build', 'tools', 'webbrowse')
-FONTS = os.path.join(REPOSITORY, 'userland', 'fonts')
+FONTS = os.path.join(REPOSITORY, 'userland', 'data', 'fonts')
 DEFAULT_LIST = os.path.join(REPOSITORY, 'scripts', 'compare-sites.list')
 DEFAULT_OUT = os.path.join(os.environ.get('TMPDIR', '/tmp'), 'compare-sites')
 

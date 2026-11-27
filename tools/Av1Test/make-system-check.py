@@ -15,7 +15,7 @@
 # You should have received a copy of the GNU General Public License
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
-"""Writes the streams av1check (userland/bin/av1check.pas) decodes on the system.
+"""Writes the streams av1check (userland/tests/av1check/av1check.pas) decodes on the system.
 
     make-system-check.py OUTPUT_INCLUDE
 

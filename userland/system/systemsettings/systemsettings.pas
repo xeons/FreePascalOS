@@ -24,7 +24,7 @@
   zone, the sound outputs' volumes and mutes, the default output); then
   it serves the port "systemsettings", making the changes only root may
   make for the users who may ask for them (Sys.SystemSettings has the
-  requests and who may make each). Units in userland/systemsettings.
+  requests and who may make each). Units in userland/system/systemsettings.
 
   It holds nothing that needs tidying up: every change is written as it
   is made, so a service stop may end it at once.

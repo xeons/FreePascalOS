@@ -41,7 +41,7 @@
   clock, the volumes, the network's settings and the accounts are
   changed by the system settings service, which asks for an
   administrator's password where it must (ControlPanel.Administrator).
-  Units in userland/controlpanel.
+  Units in userland/apps/controlpanel.
 
   Prints what happens, a line each:
 

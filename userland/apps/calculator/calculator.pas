@@ -49,7 +49,7 @@
     copied TEXT, pasted TEXT, paste refused
     exit
 
-  The units are in userland/calculator: Calculator.Numbers (showing and
+  The units are in userland/apps/calculator: Calculator.Numbers (showing and
   reading numbers), Calculator.MathFunctions, Calculator.Expressions
   (evaluating), Calculator.Engine (the keys' logic), Calculator.Actions
   (buttons and characters), Calculator.Display, Calculator.Keypad,

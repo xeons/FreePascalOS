@@ -32,8 +32,8 @@
   time) to show, so -i adds nothing yet.
 
   The sockets come from the kernel's list as netstat's do; names come
-  through Netstat.Names (userland/netstat). The units are in
-  userland/ss.
+  through Netstat.Names (userland/commands/netstat). The units are in
+  userland/commands/ss.
 }
 program ss;
 

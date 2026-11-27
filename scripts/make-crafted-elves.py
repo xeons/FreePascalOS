@@ -16,7 +16,7 @@
 # along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 """
-Writes the crafted ELF files of loadertest (userland/bin/loadertest.pas):
+Writes the crafted ELF files of loadertest (userland/tests/loadertest.pas):
 programs and libraries that try to make the kernel's loader reach kernel
 memory, pages other processes share, or past its own buffers, and two
 good ones that show the files are otherwise well formed.

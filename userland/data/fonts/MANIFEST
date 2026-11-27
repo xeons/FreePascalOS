@@ -1,4 +1,4 @@
-# The fonts in userland/fonts (scripts/fonts.list, scripts/update-fonts.py):
+# The fonts in userland/data/fonts (scripts/fonts.list, scripts/update-fonts.py):
 # family	directory	files	licence	version	package
 C059	c059	C059-BdIta.otf C059-Bold.otf C059-Italic.otf C059-Roman.otf	AGPL-3.0-only WITH PS-or-PDF-font-exception-20170817	20200910-6	gsfonts
 Cantarell	cantarell	Cantarell-VF.otf	OFL-1.1	1:0.311-1	cantarell-fonts
