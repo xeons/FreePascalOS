@@ -165,7 +165,9 @@ type
     function MemorySize: SizeInt; override;
   end;
 
-  TJsClosure = class(TJsObject)
+  { Sealed, as is TJsNativeFunction: IsClosure and IsNativeFunction
+    compare the class itself, cheaper than "is" on every call. }
+  TJsClosure = class sealed(TJsObject)
   public
     Code: TJsCode;
     Environment: TJsEnvironment;
@@ -189,7 +191,7 @@ type
   TJsNativeMethod = function(R: TJsRealm; const This: TJsValue; Args: PJsValueArray; ArgCount: Integer;
     Callee: TJsNativeFunction; const NewTarget: TJsValue): TJsValue of object;
 
-  TJsNativeFunction = class(TJsObject)
+  TJsNativeFunction = class sealed(TJsObject)
   public
     Callback: TJsNativeCallback;
     Method: TJsNativeMethod;
@@ -262,6 +264,8 @@ function CacheEntryFor(Cache: PJsPropertyCache; Shape: TJsShape): PJsPropertyCac
 function FindCacheEntry(Cache: PJsPropertyCache; Shape: TJsShape): PJsPropertyCache; inline;
 function ArgumentOrUndefined(Args: PJsValueArray; ArgCount, Index: Integer): TJsValue; inline;
 function JsIsCallable(Value: TJsValue): Boolean; inline;
+function IsClosure(Target: TJsObject): Boolean; inline;
+function IsNativeFunction(Target: TJsObject): Boolean; inline;
 function JsIsConstructor(Value: TJsValue): Boolean;
 
 implementation
@@ -417,6 +421,16 @@ begin
 end;
 
 { TJsClosure }
+
+function IsClosure(Target: TJsObject): Boolean;
+begin
+  Result := Target.ClassType = TJsClosure;
+end;
+
+function IsNativeFunction(Target: TJsObject): Boolean;
+begin
+  Result := Target.ClassType = TJsNativeFunction;
+end;
 
 procedure TJsClosure.Trace(Tracer: TJsTracer);
 begin

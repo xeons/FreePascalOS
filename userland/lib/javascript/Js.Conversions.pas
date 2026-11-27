@@ -91,6 +91,14 @@ function IsJsSpace(Code: Word): Boolean;
 function KeyToStringValue(R: TJsRealm; Key: TJsValue): TJsValue;
 function KeyToPascal(R: TJsRealm; Key: TJsValue): string;
 function ValueToPascal(R: TJsRealm; Value: TJsValue): string;
+{ Throws an error whose message names a key (KeyToPascal) or a value
+  (ValueToPascal) between two texts. The message is made in here: a
+  caller that made it itself would need a string of its own, costing it
+  an exception frame on every call, thrown or not. }
+function ThrowNamingKey(R: TJsRealm; Kind: TJsErrorKind; const Before: string; Key: TJsValue;
+  const After: string): TJsValue;
+function ThrowNamingValue(R: TJsRealm; Kind: TJsErrorKind; const Before: string; Value: TJsValue;
+  const After: string): TJsValue;
 
 function TypeofValue(R: TJsRealm; Value: TJsValue): TJsValue;
 { ==; False when it threw. }
@@ -250,6 +258,37 @@ begin
   Result := True;
 end;
 
+{ The decimal text of an integer, written straight into a new string. }
+function IntegerToJsString(R: TJsRealm; Value: LongInt): TJsString;
+var
+  Characters: array[0..11] of Byte;
+  Position: Integer;
+  Magnitude: LongWord;
+begin
+  Position := High(Characters) + 1;
+  if Value < 0 then
+    Magnitude := LongWord(-Int64(Value))
+  else
+    Magnitude := LongWord(Value);
+  repeat
+    Dec(Position);
+    Characters[Position] := Ord('0') + Magnitude mod 10;
+    Magnitude := Magnitude div 10;
+  until Magnitude = 0;
+  if Value < 0 then
+  begin
+    Dec(Position);
+    Characters[Position] := Ord('-');
+  end;
+  Result := NewLatin1String(R.Heap, @Characters[Position], High(Characters) + 1 - Position);
+end;
+
+{ Apart from ToStringValue, which then needs no text of its own. }
+function BigIntToStringValue(R: TJsRealm; Value: TJsValue): TJsValue;
+begin
+  Result := R.NewString(BigIntToText(TJsBigInt(JsAsCell(Value)), 10));
+end;
+
 function ToStringValue(R: TJsRealm; Value: TJsValue): TJsValue;
 begin
   if JsIsString(Value) then
@@ -258,7 +297,7 @@ begin
   begin
     if (JsAsInteger(Value) >= 0) and (JsAsInteger(Value) < 10) then
       Exit(JsStringValue(R.Runtime.CharacterString(Ord('0') + JsAsInteger(Value))));
-    Exit(R.NewString(IntToStr(JsAsInteger(Value))));
+    Exit(JsStringValue(IntegerToJsString(R, JsAsInteger(Value))));
   end;
   if JsIsDouble(Value) then
     Exit(JsStringValue(NumberToJsString(R, JsAsDouble(Value))));
@@ -271,7 +310,7 @@ begin
   if JsIsSymbol(Value) then
     Exit(R.ThrowTypeError('Cannot convert a Symbol value to a string'));
   if JsIsBigInt(Value) then
-    Exit(R.NewString(BigIntToText(TJsBigInt(JsAsCell(Value)), 10)));
+    Exit(BigIntToStringValue(R, Value));
   Value := ToPrimitive(R, Value, ptString);
   if Value = JsException then
     Exit(JsException);
@@ -321,7 +360,7 @@ begin
   begin
     if JsAsInteger(Value) >= 0 then
       Exit(Value);
-    Exit(R.Intern(IntToStr(JsAsInteger(Value))));
+    Exit(JsStringValue(R.Runtime.Atoms.Intern(IntegerToJsString(R, JsAsInteger(Value)))));
   end;
   if JsIsString(Value) then
   begin
@@ -457,21 +496,40 @@ end;
 
 { Number to text }
 
-procedure ShortestDigits(Value: Double; out Digits: string; out Exponent: Integer);
+{ Value in exponent form with Precision significant digits, correctly
+  rounded ("d.dddE+xx"), when that reads back as Value. }
+function RoundTripText(Value: Double; Precision: Integer; out Text: string): Boolean;
 var
-  Precision, Position, Code, ExponentPosition: Integer;
-  Text, Mantissa: string;
   Check: Double;
+  Code: Integer;
+begin
+  Text := FloatToStrF(Value, ffExponent, Precision, 0, DefaultFormatSettings);
+  Val(Text, Check, Code);
+  Result := (Code = 0) and (Check = Value);
+end;
+
+{ The shortest digits are those of the first precision whose correctly
+  rounded text reads back as Value. Up to 15 digits there is no need to
+  try each: half a double's spacing is under a fifth of the spacing of
+  15-digit decimals, so a round trip of k <= 15 digits exists exactly
+  when the 15-digit rounding reads back, and is that rounding without
+  its trailing zeros. Only 16 and 17 digits are left to try. Subnormal
+  doubles have fewer bits, wider spacing, and try every precision. }
+procedure ShortestDigits(Value: Double; out Digits: string; out Exponent: Integer);
+const
+  SmallestNormal = 2.2250738585072014e-308;
+var
+  Position, Code, ExponentPosition, Precision: Integer;
+  Text, Mantissa: string;
 begin
   Digits := '';
   Exponent := 0;
-  for Precision := 1 to 17 do
-  begin
-    Text := FloatToStrF(Value, ffExponent, Precision, 0, DefaultFormatSettings);
-    Val(Text, Check, Code);
-    if (Code = 0) and (Check = Value) then
-      Break;
-  end;
+  if Abs(Value) >= SmallestNormal then
+    Precision := 15
+  else
+    Precision := 1;
+  while not RoundTripText(Value, Precision, Text) and (Precision < 17) do
+    Inc(Precision);
   { Text: d.dddE+xx }
   { The runtime leaves out a zero exponent. }
   ExponentPosition := Pos('E', Text);
@@ -485,12 +543,17 @@ begin
     Mantissa := Copy(Text, 1, ExponentPosition - 1);
     Val(Copy(Text, ExponentPosition + 1, MaxInt), Exponent, Code);
   end;
-  Digits := '';
+  SetLength(Digits, System.Length(Mantissa));
+  Code := 0;
   for Position := 1 to System.Length(Mantissa) do
     if Mantissa[Position] in ['0'..'9'] then
-      Digits := Digits + Mantissa[Position];
-  while (System.Length(Digits) > 1) and (Digits[System.Length(Digits)] = '0') do
-    Delete(Digits, System.Length(Digits), 1);
+    begin
+      Inc(Code);
+      Digits[Code] := Mantissa[Position];
+    end;
+  while (Code > 1) and (Digits[Code] = '0') do
+    Dec(Code);
+  SetLength(Digits, Code);
   Inc(Exponent);
 end;
 
@@ -534,12 +597,23 @@ begin
   end;
 end;
 
-function NumberToJsString(R: TJsRealm; Value: Double): TJsString;
+{ A number through its text: apart from NumberToJsString so that int32
+  values, written directly, skip setting up and freeing the text. }
+function NumberTextToJsString(R: TJsRealm; Value: Double): TJsString;
 var
   Text: string;
 begin
   Text := NumberToString(Value);
   Result := NewLatin1String(R.Heap, PByte(PChar(Text)), Length(Text));
+end;
+
+function NumberToJsString(R: TJsRealm; Value: Double): TJsString;
+var
+  Integer32: LongInt;
+begin
+  if DoubleIsInt32(Value, Integer32) then
+    Exit(IntegerToJsString(R, Integer32));
+  Result := NumberTextToJsString(R, Value);
 end;
 
 function NumberToRadixString(Value: Double; Radix: Integer): string;
@@ -693,19 +767,41 @@ begin
   Result := Value;
 end;
 
-function StringToNumber(R: TJsRealm; Text: TJsString): Double;
+{ Units Start..Finish of Text when they are up to 9 decimal digits,
+  perhaps after a minus sign: the common case, read without the text. }
+function ShortDecimalValue(Text: TJsString; Start, Finish: Integer; out Value: Double): Boolean;
+var
+  Index: Integer;
+  Negative: Boolean;
+  Code: Word;
+  Magnitude: LongInt;
+begin
+  Result := False;
+  Negative := (Start < Finish) and (Text.CharAt(Start) = Ord('-'));
+  if Negative then
+    Inc(Start);
+  if (Finish < Start) or (Finish - Start >= 9) then
+    Exit;
+  Magnitude := 0;
+  for Index := Start to Finish do
+  begin
+    Code := Text.CharAt(Index);
+    if (Code < Ord('0')) or (Code > Ord('9')) then
+      Exit;
+    Magnitude := Magnitude * 10 + (Code - Ord('0'));
+  end;
+  Value := Magnitude;
+  if Negative then
+    Value := -Value;
+  Result := True;
+end;
+
+function TrimmedTextToNumber(Text: TJsString; Start, Finish: Integer): Double;
 var
   Ascii: string;
-  Index, Start, Finish: Integer;
+  Index: Integer;
   Code: Word;
 begin
-  Text.Flatten(R.Heap);
-  Start := 0;
-  Finish := Text.Length - 1;
-  while (Start <= Finish) and IsJsSpace(Text.CharAt(Start)) do
-    Inc(Start);
-  while (Finish >= Start) and IsJsSpace(Text.CharAt(Finish)) do
-    Dec(Finish);
   Ascii := '';
   SetLength(Ascii, Finish - Start + 1);
   for Index := Start to Finish do
@@ -716,6 +812,21 @@ begin
     Ascii[Index - Start + 1] := Char(Code);
   end;
   Result := TextToNumber(Ascii);
+end;
+
+function StringToNumber(R: TJsRealm; Text: TJsString): Double;
+var
+  Start, Finish: Integer;
+begin
+  Text.Flatten(R.Heap);
+  Start := 0;
+  Finish := Text.Length - 1;
+  while (Start <= Finish) and IsJsSpace(Text.CharAt(Start)) do
+    Inc(Start);
+  while (Finish >= Start) and IsJsSpace(Text.CharAt(Finish)) do
+    Dec(Finish);
+  if not ShortDecimalValue(Text, Start, Finish, Result) then
+    Result := TrimmedTextToNumber(Text, Start, Finish);
 end;
 
 function KeyToStringValue(R: TJsRealm; Key: TJsValue): TJsValue;
@@ -739,6 +850,18 @@ begin
     Exit('Symbol(' + StringToUtf8(R.Heap, JsAsSymbol(Key).Description) + ')');
   end;
   Result := '';
+end;
+
+function ThrowNamingKey(R: TJsRealm; Kind: TJsErrorKind; const Before: string; Key: TJsValue;
+  const After: string): TJsValue;
+begin
+  Result := R.ThrowError(Kind, Before + KeyToPascal(R, Key) + After);
+end;
+
+function ThrowNamingValue(R: TJsRealm; Kind: TJsErrorKind; const Before: string; Value: TJsValue;
+  const After: string): TJsValue;
+begin
+  Result := R.ThrowError(Kind, Before + ValueToPascal(R, Value) + After);
 end;
 
 { A short description for messages (never runs JavaScript). }
