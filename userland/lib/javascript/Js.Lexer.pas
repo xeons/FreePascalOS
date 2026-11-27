@@ -107,6 +107,14 @@ type
 
   TJsNameList = array of UnicodeString;
 
+  { A slot of the lexer's name table: the name's hash beside its index,
+    so that a probe reads one place. }
+  TJsNameSlot = record
+    Hash: LongWord;
+    { The name's index + 1; 0: empty. }
+    Entry: Integer;
+  end;
+
   EJsSyntaxError = class(Exception)
   public
     Line: Integer;
@@ -124,18 +132,21 @@ type
     FNewline: Boolean;
     { The names met so far, each kept once: a name written a thousand
       times is one string and one index. Dense arrays by index, and an
-      open addressing table of index + 1 (0: empty) by hash. }
+      open addressing table by hash. }
     FNames: TJsNameList;
     FNameKinds: array of TJsTokenKind;
     FNameWords: array of TJsWord;
     FNameHashes: array of LongWord;
     FNameCount: Integer;
-    FNameSlots: array of Integer;
+    FNameSlots: array of TJsNameSlot;
     procedure GrowNameSlots;
+    procedure InsertNameSlot(Entry: Integer);
+    function NewNameEntry(Hash: LongWord): Integer;
     function AddName(Start, Count: Integer; Hash: LongWord): Integer;
     function FindName(Start, Count: Integer; Hash: LongWord): Integer;
     function InternText(const Text: UnicodeString): Integer;
     procedure InternWords;
+    procedure CopyNames(From: TJsLexer);
     procedure Fail(const Text: string);
     function Peek(Offset: Integer = 0): WideChar; inline;
     procedure SkipComment;
@@ -213,6 +224,11 @@ const
 
   HashOffset = LongWord(2166136261);
   HashPrime = LongWord(16777619);
+
+var
+  { A lexer of no source, made at start-up: its name table holds the
+    words, and new lexers start from a copy. }
+  WordsLexer: TJsLexer = nil;
 
 type
   { What an ASCII character means between tokens. }
@@ -373,7 +389,10 @@ begin
   FPosition := 1;
   FLine := 1;
   FLineStart := 1;
-  InternWords;
+  if WordsLexer <> nil then
+    CopyNames(WordsLexer)
+  else
+    InternWords;
   { A #! line at the very start is a comment. }
   if (FLength >= 2) and (FSource[1] = '#') and (FSource[2] = '!') then
     while (FPosition <= FLength) and not IsLineTerminator(FSource[FPosition]) do
@@ -424,21 +443,26 @@ end;
 procedure TJsLexer.GrowNameSlots;
 var
   Index, Size: Integer;
-  Mask, Slot: LongWord;
 begin
   Size := 1024;
   while Size < FNameCount * 4 do
     Size := Size * 2;
   FNameSlots := nil;
   SetLength(FNameSlots, Size);
-  Mask := LongWord(Length(FNameSlots) - 1);
   for Index := 0 to FNameCount - 1 do
-  begin
-    Slot := FNameHashes[Index] and Mask;
-    while FNameSlots[Slot] <> 0 do
-      Slot := (Slot + 1) and Mask;
-    FNameSlots[Slot] := Index + 1;
-  end;
+    InsertNameSlot(Index);
+end;
+
+procedure TJsLexer.InsertNameSlot(Entry: Integer);
+var
+  Mask, Slot: LongWord;
+begin
+  Mask := LongWord(Length(FNameSlots) - 1);
+  Slot := FNameHashes[Entry] and Mask;
+  while FNameSlots[Slot].Entry <> 0 do
+    Slot := (Slot + 1) and Mask;
+  FNameSlots[Slot].Hash := FNameHashes[Entry];
+  FNameSlots[Slot].Entry := Entry + 1;
 end;
 
 { The index of the name written at Start (Count units, hashed to Hash);
@@ -454,28 +478,29 @@ begin
   Slot := Hash and Mask;
   while True do
   begin
-    Entry := FNameSlots[Slot];
+    Entry := FNameSlots[Slot].Entry;
     if Entry = 0 then
       Exit(-1);
-    Dec(Entry);
-    if (FNameHashes[Entry] = Hash) and (Length(FNames[Entry]) = Count) then
+    if FNameSlots[Slot].Hash = Hash then
     begin
-      { Names are short: a loop rather than a call. }
-      Name := PWideChar(FNames[Entry]);
-      Index := 0;
-      while (Index < Count) and (Name[Index] = Text[Index]) do
-        Inc(Index);
-      if Index = Count then
-        Exit(Entry);
+      Dec(Entry);
+      if Length(FNames[Entry]) = Count then
+      begin
+        { Names are short: a loop rather than a call. }
+        Name := PWideChar(FNames[Entry]);
+        Index := 0;
+        while (Index < Count) and (Name[Index] = Text[Index]) do
+          Inc(Index);
+        if Index = Count then
+          Exit(Entry);
+      end;
     end;
     Slot := (Slot + 1) and Mask;
   end;
 end;
 
-{ A new name, the source's units from Start. }
-function TJsLexer.AddName(Start, Count: Integer; Hash: LongWord): Integer;
-var
-  Mask, Slot: LongWord;
+{ A new entry (an identifier, no text yet), not in the slots yet. }
+function TJsLexer.NewNameEntry(Hash: LongWord): Integer;
 begin
   if FNameCount >= Length(FNames) then
   begin
@@ -485,21 +510,21 @@ begin
     SetLength(FNameHashes, Length(FNames));
   end;
   Result := FNameCount;
-  SetString(FNames[Result], PWideChar(@FSource[Start]), Count);
   FNameKinds[Result] := tkIdentifier;
   FNameWords[Result] := jwNone;
   FNameHashes[Result] := Hash;
   Inc(FNameCount);
+end;
+
+{ A new name, the source's units from Start. }
+function TJsLexer.AddName(Start, Count: Integer; Hash: LongWord): Integer;
+begin
+  Result := NewNameEntry(Hash);
+  SetString(FNames[Result], PWideChar(@FSource[Start]), Count);
   if FNameCount * 2 > Length(FNameSlots) then
     GrowNameSlots
   else
-  begin
-    Mask := LongWord(Length(FNameSlots) - 1);
-    Slot := Hash and Mask;
-    while FNameSlots[Slot] <> 0 do
-      Slot := (Slot + 1) and Mask;
-    FNameSlots[Slot] := Result + 1;
-  end;
+    InsertNameSlot(Result);
 end;
 
 { A name that is not a slice of the source as written (escapes): the
@@ -512,30 +537,19 @@ begin
   Hash := NameHash(PWideChar(Text), Length(Text));
   Mask := LongWord(Length(FNameSlots) - 1);
   Slot := Hash and Mask;
-  while FNameSlots[Slot] <> 0 do
+  while FNameSlots[Slot].Entry <> 0 do
   begin
-    Entry := FNameSlots[Slot] - 1;
-    if (FNameHashes[Entry] = Hash) and (FNames[Entry] = Text) then
+    Entry := FNameSlots[Slot].Entry - 1;
+    if (FNameSlots[Slot].Hash = Hash) and (FNames[Entry] = Text) then
       Exit(Entry);
     Slot := (Slot + 1) and Mask;
   end;
-  if FNameCount >= Length(FNames) then
-  begin
-    SetLength(FNames, Length(FNames) * 2 + 256);
-    SetLength(FNameKinds, Length(FNames));
-    SetLength(FNameWords, Length(FNames));
-    SetLength(FNameHashes, Length(FNames));
-  end;
-  Result := FNameCount;
+  Result := NewNameEntry(Hash);
   FNames[Result] := Text;
-  FNameKinds[Result] := tkIdentifier;
-  FNameWords[Result] := jwNone;
-  FNameHashes[Result] := Hash;
-  Inc(FNameCount);
   if FNameCount * 2 > Length(FNameSlots) then
     GrowNameSlots
   else
-    FNameSlots[Slot] := Result + 1;
+    InsertNameSlot(Result);
 end;
 
 { The reserved and contextual words come first: a name scanned later
@@ -558,6 +572,18 @@ begin
     Name := InternText(WordTexts[Word]);
     FNameWords[Name] := Word;
   end;
+end;
+
+{ The table of a lexer that only knows the words (cheaper than entering
+  them again: a lazily compiled function makes a lexer of its own). }
+procedure TJsLexer.CopyNames(From: TJsLexer);
+begin
+  FNames := Copy(From.FNames);
+  FNameKinds := Copy(From.FNameKinds);
+  FNameWords := Copy(From.FNameWords);
+  FNameHashes := Copy(From.FNameHashes);
+  FNameSlots := Copy(From.FNameSlots);
+  FNameCount := From.FNameCount;
 end;
 
 function TJsLexer.IsReservedName(Name: Integer): Boolean;
@@ -1544,4 +1570,7 @@ end;
 
 initialization
   FillCharacterClasses;
+  WordsLexer := TJsLexer.Create('');
+finalization
+  WordsLexer.Free;
 end.

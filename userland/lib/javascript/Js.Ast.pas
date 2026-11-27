@@ -212,6 +212,8 @@ type
     { A direct eval can see the scope's bindings by name: they all live
       in its environment. }
     EvalExposed: Boolean;
+    { A direct eval call is among the references. }
+    HasDirectEval: Boolean;
     { The cell describing the scope for the code compiled later inside
       it (Js.EvalScopes' TJsEvalChain, made once; nil again when the
       scope declares or removes a variable). }
@@ -556,6 +558,13 @@ begin
   FIndexedCount := VariableCount;
 end;
 
+{ The same name: interned names are mostly the same string, and other
+  lengths never match (both tested before a comparison call). }
+function SameName(const A, B: UnicodeString): Boolean; inline;
+begin
+  Result := (Pointer(A) = Pointer(B)) or ((Length(A) = Length(B)) and (A = B));
+end;
+
 function TJsScope.Find(const Name: UnicodeString): TJsVariable;
 var
   Index: Integer;
@@ -564,7 +573,7 @@ begin
   if VariableCount <= LinearFindLimit then
   begin
     for Index := 0 to VariableCount - 1 do
-      if Variables[Index].Name = Name then
+      if SameName(Variables[Index].Name, Name) then
         Exit(Variables[Index]);
     if Backing <> nil then
       Exit(Backing.Restore(Self, Name));
@@ -577,7 +586,7 @@ begin
   while FNameSlots[Slot] <> 0 do
   begin
     Result := Variables[FNameSlots[Slot] - 1];
-    if Result.Name = Name then
+    if SameName(Result.Name, Name) then
       Exit;
     Slot := (Slot + 1) and Mask;
   end;
@@ -617,6 +626,8 @@ begin
   References[ReferenceCount] := Node;
   Inc(ReferenceCount);
   Node.ReferenceScope := Self;
+  if (Node.Kind = nkCall) and ((Node.Flags and CallFlagDirectEval) <> 0) then
+    HasDirectEval := True;
 end;
 
 procedure TJsScope.RemoveVariable(Variable: TJsVariable);
@@ -678,8 +689,8 @@ destructor TJsAstArena.Destroy;
 var
   Index: Integer;
 begin
-  ReleaseNodes(0);
-  FReferences.Truncate(0, @ReleaseNode);
+  FNodes.ReleaseAll(@ReleaseNode);
+  FReferences.ReleaseAll(@ReleaseNode);
   FReferences.Free;
   FNodes.Free;
   for Index := 0 to FObjectCount - 1 do

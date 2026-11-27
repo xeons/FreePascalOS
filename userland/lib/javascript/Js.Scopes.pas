@@ -105,33 +105,49 @@ begin
   Variable.Captured := True;
 end;
 
+{ Field initializers and static blocks have no arguments: naming it
+  there (outside a nested function) is an early error (15.7.1). }
+procedure FailArgumentsInInitializer(Node: TJsNode);
+begin
+  raise EJsSyntaxError.CreateAt('''arguments'' is not allowed in class field initializer or static ' +
+    'initialization block', Node.Line, Node.Column);
+end;
+
+{ A private name no enclosing class declares (15.7.1). }
+procedure FailUndeclaredPrivateName(Node: TJsNode);
+begin
+  raise EJsSyntaxError.CreateAt('Private field ''' + string(Node.Text) + ''' must be declared in an enclosing class',
+    Node.Line, Node.Column);
+end;
+
+{ The error paths are procedures of their own: this runs for every
+  identifier, without the frame their strings would need. }
 procedure ResolveIdentifier(Node: TJsNode; Scope: TJsScope);
 var
   Walk: TJsScope;
   Variable: TJsVariable;
-  Name: UnicodeString;
+  IsArguments: Boolean;
 begin
-  Name := Node.Text;
+  IsArguments := Node.Text = 'arguments';
   Walk := Scope;
   Variable := nil;
-  Node.DynamicScopes := nil;
+  if Node.DynamicScopes <> nil then
+    Node.DynamicScopes := nil;
   while Walk <> nil do
   begin
-    Variable := Walk.Find(Name);
+    Variable := Walk.Find(Node.Text);
     if Variable <> nil then
       Break;
-    { Field initializers and static blocks have no arguments: naming it
-      there (outside a nested function) is an early error (15.7.1). }
-    if (Name = 'arguments') and (Walk.Kind = skFunction) and (Walk.Func <> nil) and
-      (Walk.Func.Kind = fkClassFieldInitializer) then
-      raise EJsSyntaxError.CreateAt('''arguments'' is not allowed in class field initializer or static ' +
-        'initialization block', Node.Line, Node.Column);
-    if (Name = 'arguments') and (Walk.Kind = skFunction) and (Walk.Func <> nil) and
-      not (Walk.Func.Kind in [fkArrow, fkClassFieldInitializer]) then
+    if IsArguments and (Walk.Kind = skFunction) and (Walk.Func <> nil) then
     begin
-      Variable := EnsureImplicit(Walk, 'arguments', Walk.Func.ArgumentsVariable);
-      Walk.Func.UsesArguments := True;
-      Break;
+      if Walk.Func.Kind = fkClassFieldInitializer then
+        FailArgumentsInInitializer(Node);
+      if Walk.Func.Kind <> fkArrow then
+      begin
+        Variable := EnsureImplicit(Walk, 'arguments', Walk.Func.ArgumentsVariable);
+        Walk.Func.UsesArguments := True;
+        Break;
+      end;
     end;
     if Walk.WithVariable <> nil then
       AddDynamicScope(Node, Walk.WithVariable);
@@ -140,10 +156,8 @@ begin
       AddDynamicScope(Node, Walk.Func.EvalVarsVariable);
     Walk := Walk.Parent;
   end;
-  { A private name no enclosing class declares (15.7.1). }
-  if (Variable = nil) and (Name <> '') and (Name[1] = '#') then
-    raise EJsSyntaxError.CreateAt('Private field ''' + string(Name) + ''' must be declared in an enclosing class',
-      Node.Line, Node.Column);
+  if (Variable = nil) and (Node.Text <> '') and (Node.Text[1] = '#') then
+    FailUndeclaredPrivateName(Node);
   Node.Variable := Variable;
   if (Variable <> nil) and (Variable.Scope.FunctionScope <> Scope.FunctionScope) then
     Variable.Captured := True;
@@ -278,10 +292,11 @@ var
 begin
   if (Scope.Kind = skFunction) and (Scope.Func <> nil) and (Scope.Func.Kind = fkDerivedConstructor) then
     EnsureImplicit(Scope, '%this', Scope.Func.ThisVariable);
-  for Index := 0 to Scope.ReferenceCount - 1 do
-    if (Scope.References[Index].Kind = nkCall) and
-      ((Scope.References[Index].Flags and CallFlagDirectEval) <> 0) then
-      PrepareDirectEval(Scope);
+  if Scope.HasDirectEval then
+    for Index := 0 to Scope.ReferenceCount - 1 do
+      if (Scope.References[Index].Kind = nkCall) and
+        ((Scope.References[Index].Flags and CallFlagDirectEval) <> 0) then
+        PrepareDirectEval(Scope);
   for Index := 0 to Scope.ChildCount - 1 do
     PrepareScope(Scope.Children[Index]);
 end;

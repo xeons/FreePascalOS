@@ -67,6 +67,8 @@ type
     { Takes back the slots from Count on, latest first, each given to
       Release, then zeroed: they are handed out again. }
     procedure Truncate(Count: Integer; Release: TJsSlotRelease);
+    { Gives every slot to Release, before the pool goes. }
+    procedure ReleaseAll(Release: TJsSlotRelease);
     { Slots handed out. }
     property Count: Integer read FCount;
   end;
@@ -125,6 +127,27 @@ begin
   Result := FBlocks[FCurrent].Memory + FUsed * FSlotSize;
   Inc(FUsed);
   Inc(FCount);
+end;
+
+procedure TJsSlotPool.ReleaseAll(Release: TJsSlotRelease);
+var
+  Block, Used: Integer;
+  Slot, Finish: PByte;
+begin
+  for Block := 0 to FCurrent do
+  begin
+    if Block = FCurrent then
+      Used := FUsed
+    else
+      Used := FBlocks[Block].Capacity;
+    Slot := FBlocks[Block].Memory;
+    Finish := Slot + Used * FSlotSize;
+    while Slot < Finish do
+    begin
+      Release(Slot);
+      Inc(Slot, FSlotSize);
+    end;
+  end;
 end;
 
 procedure TJsSlotPool.Truncate(Count: Integer; Release: TJsSlotRelease);

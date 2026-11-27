@@ -79,6 +79,10 @@ type
     { A function expression comes right after '(': most likely invoked
       at once (an IIFE), so compiled eagerly rather than parsed twice. }
     FFunctionInParentheses: Boolean;
+    { Where the first expression right inside parentheses starts: an
+      arrow starting there, (() => ...), is most likely invoked at once
+      too. }
+    FParenthesizedStart: Integer;
     { What ParseFunction is told about the function it parses next: it
       is right inside parentheses. }
     FNextFunctionInParentheses: Boolean;
@@ -1877,6 +1881,7 @@ begin
   Info.Kind := fkArrow;
   Info.IsAsync := IsAsync;
   Info.IsStrict := FStrict;
+  Info.InParentheses := StartToken.Start = FParenthesizedStart;
   Info.SourceStart := StartToken.Start;
   Info.Line := StartToken.Line;
   Info.Column := StartToken.Column;
@@ -3247,6 +3252,7 @@ function TJsParser.ParseParenthesized: TJsNode;
 var
   StartToken: TJsToken;
   Sequence, Rest: TJsNode;
+  SavedStart: Integer;
 begin
   StartToken := FToken;
   Expect(tkLeftParen);
@@ -3278,7 +3284,15 @@ begin
       Sequence.Flags := ArrowParametersFlag;
       Exit(Sequence);
     end;
-    Sequence.Add(ParseAssignment);
+    if Sequence.Count = 0 then
+    begin
+      SavedStart := FParenthesizedStart;
+      FParenthesizedStart := FToken.Start;
+      Sequence.Add(ParseAssignment);
+      FParenthesizedStart := SavedStart;
+    end
+    else
+      Sequence.Add(ParseAssignment);
     if FToken.Kind = tkComma then
     begin
       Next;
